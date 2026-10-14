@@ -14,7 +14,10 @@ Hazus behaviours reproduced on purpose (see ``docs/flood-dataflow.md``):
   TM meaning should derive it from ``flooded_depth``.
 * If the facility's flood protection (in years) exceeds the scenario return period, there is no damage.
 * User-defined facilities report the *structure* damage percentage as the content damage percentage
-  (``udf_content_uses_structure_pct``).
+  (``udf_content_uses_structure_pct``). When a UDF has no content cost, the content-to-structure ratio is
+  ``ContentValPct / 100`` in *integer* arithmetic, so 50 % becomes 0 and 150 % becomes 1
+  (``udf_content_ratio_truncated``).
+* Percentages are interpolated in float32 and losses are stored as float32, as in the C#.
 """
 
 from __future__ import annotations
@@ -22,6 +25,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from typing import Mapping
+
+import numpy as np
 
 DamageFunction = Mapping[str, float]
 
@@ -41,14 +46,31 @@ def depth_column(i: int, *, clamp_high: int | None = None) -> str:
     return f"ft{i}"
 
 
+def _value(ddf: DamageFunction, column: str) -> np.float32:
+    """``GetIntervalValue``: a missing column (e.g. ``ft01m`` of a utility function) or a null value is 0."""
+    v = ddf.get(column)
+    return np.float32(0.0 if v is None or v != v else v)
+
+
 def interpolate(ddf: DamageFunction, depth: float, *, clamp_high: int | None = None) -> float:
-    """Percent damage at ``depth`` ft by linear interpolation between whole-foot columns."""
+    """Percent damage at ``depth`` ft by linear interpolation between whole-foot columns.
+
+    Mirrors the C# exactly, including its float32 (``float``) arithmetic. Columns the function does not have
+    count as 0, so a utility (whose functions start at ``ft00``) below its equipment height interpolates
+    towards 0.
+    """
     lo, hi = math.floor(depth), math.ceil(depth)
-    v_hi = float(ddf[depth_column(hi, clamp_high=clamp_high)])
+    v_hi = _value(ddf, depth_column(hi, clamp_high=clamp_high))
     if lo == hi:
-        return v_hi
-    v_lo = float(ddf[depth_column(lo, clamp_high=clamp_high)])
-    return v_lo + (v_hi - v_lo) * (depth - lo) / (hi - lo)
+        return float(v_hi)
+    v_lo = _value(ddf, depth_column(lo, clamp_high=clamp_high))
+    # C#: lo + (hi - lo) * ((float)depth - (float)lo) / ((float)(hi - lo) * 1f), all in float32
+    return float(v_lo + (v_hi - v_lo) * (np.float32(depth) - np.float32(lo)) / np.float32(hi - lo))
+
+
+def _loss(pct: float, value: float, ratio: float = 1.0) -> float:
+    """``(float)(pct * value [* ratio] / 100.0)`` as in the C# (double arithmetic, stored as float)."""
+    return float(np.float32(float(pct) * float(value) * ratio / 100.0))
 
 
 def _protected(flood_protection: int | None, return_period: int) -> bool:
@@ -63,7 +85,7 @@ class EssentialFacilityResult:
     cont_loss: float = 0.0
     functionality: bool = True  # raw Hazus value, see module docstring
     flooded_depth: float | None = None
-    max_days_to_restoration: int = 1
+    max_days_to_restoration: int | None = 1
 
 
 def essential_facility_damage(depth: float, *, first_floor_ht: float, cost: float,
@@ -86,17 +108,18 @@ def essential_facility_damage(depth: float, *, first_floor_ht: float, cost: floa
     result.flooded_depth = flooded
     functional_depth = 0.0
     if restoration is not None:
-        result.max_days_to_restoration = int(restoration["MaxDays"])
+        days = restoration.get("MaxDays")
+        result.max_days_to_restoration = None if days is None else int(days)
         functional_depth = float(restoration.get("FunctionalDepth") or 0.0)
     if _protected(flood_protection, return_period):
         return result
     result.functionality = flooded > functional_depth
     pct = interpolate(structure_ddf, flooded)
     result.bldg_dmg_pct = pct
-    result.bldg_loss = pct * cost / 100.0
+    result.bldg_loss = _loss(pct, cost)
     cpct = interpolate(content_ddf, flooded)
     result.cont_dmg_pct = cpct
-    result.cont_loss = cpct * cost * (content_ratio_pct / 100.0) / 100.0
+    result.cont_loss = _loss(cpct, cost, content_ratio_pct / 100.0)
     return result
 
 
@@ -126,7 +149,7 @@ def utility_damage(depth: float, *, equipment_ht: float, cost: float, ddf: Damag
     result.functionality = flooded > functional_depth
     pct = interpolate(ddf, flooded, clamp_high=10)
     result.dmg_pct = pct
-    result.loss = pct * cost / 100.0
+    result.loss = _loss(pct, cost)
     return result
 
 
@@ -145,11 +168,14 @@ def user_defined_facility_damage(depth: float, *, first_floor_ht: float, cost: f
                                  annual_sales_per_sqft: float | None = None,
                                  business_inv_pct_of_sales: float | None = None,
                                  flood_protection: int | None = None, return_period: int = 0,
-                                 udf_content_uses_structure_pct: bool = True) -> UserDefinedFacilityResult:
+                                 udf_content_uses_structure_pct: bool = True,
+                                 udf_content_ratio_truncated: bool = True) -> UserDefinedFacilityResult:
     """Damage to one user-defined facility.
 
     With ``udf_content_uses_structure_pct=True`` (the Hazus 7.2 behaviour) the content loss and content
-    percentage use the *structure* damage percentage, and ``content_ddf`` is ignored.
+    percentage use the *structure* damage percentage, and ``content_ddf`` is ignored. With
+    ``udf_content_ratio_truncated=True`` (also Hazus 7.2) ``content_ratio_pct`` is divided by 100 in integer
+    arithmetic.
     """
     result = UserDefinedFacilityResult()
     if depth < 0:
@@ -160,15 +186,18 @@ def user_defined_facility_damage(depth: float, *, first_floor_ht: float, cost: f
         return result
     pct = interpolate(structure_ddf, flooded)
     result.bldg_dmg_pct = pct
-    result.bldg_loss = pct * cost / 100.0
+    result.bldg_loss = _loss(pct, cost)
     cpct = pct if udf_content_uses_structure_pct or content_ddf is None else interpolate(content_ddf, flooded)
     if not content_cost:
-        result.cont_loss = cpct * cost * (content_ratio_pct / 100.0) / 100.0
+        ratio = int(content_ratio_pct) // 100 if udf_content_ratio_truncated else content_ratio_pct / 100.0
+        result.cont_loss = _loss(cpct, cost, ratio)
     else:
-        result.cont_loss = cpct * content_cost / 100.0
+        result.cont_loss = _loss(cpct, content_cost)
     result.cont_dmg_pct = cpct
     if annual_sales_per_sqft is not None:
-        result.inv_loss = pct / 100.0 * annual_sales_per_sqft * area_sqft * (business_inv_pct_of_sales or 0.0)
+        per_sqft = np.float32(pct) / np.float32(100) * np.float32(annual_sales_per_sqft)
+        result.inv_loss = float(np.float32(float(per_sqft) * float(area_sqft)
+                                           * float(np.float32(business_inv_pct_of_sales or 0.0))))
     return result
 
 

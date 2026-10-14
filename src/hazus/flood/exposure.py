@@ -240,6 +240,21 @@ def to_area_weighted_table(long: pd.DataFrame) -> pd.DataFrame:
     return wide.reset_index()
 
 
+def area_weighted_rows(long: pd.DataFrame, *, study_case_id: int, return_period: str, controlling_hazard: str,
+                       analysis_opt_id: int = 0) -> pd.DataFrame:
+    """``flAnAreaWeighted`` rows that ``absp_GBSInsertAW`` writes for one depth grid.
+
+    ``controlling_hazard`` is the grid's ``"R"`` or ``"C"``. ``return_period`` is ``"-1"`` for a single event.
+    """
+    wide = to_area_weighted_table(long[long["CensusBlock"].notna()])
+    columns = [bin_column(int(b)) for b in BIN_CODES]
+    return pd.DataFrame({
+        "StudyCaseID": study_case_id, "CensusBlock": wide["CensusBlock"], "ReturnPeriodID": return_period,
+        "ControllingHazard": controlling_hazard, "CoastalZone": wide["CoastalZone"],
+        **{c: wide[c].astype("float64") for c in columns}, "Proc_Order": 0, "AnalysisOptId": analysis_opt_id,
+    })
+
+
 def _box(minx, miny, maxx, maxy):
     from shapely.geometry import box
 
