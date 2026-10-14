@@ -193,8 +193,9 @@ Shelter (`absp_SHRDoIT`) and debris (`CalculateDebris`) quirks are listed in `ha
 
 | Step | Python | Checked against |
 |---|---|---|
+| Study-region creation | `inventory.region.create_region` (see `docs/region.md`) | Hazus-built DC and Delaware regions, exact |
 | Scenario creation | `hazard.create_scenario`, `prepare_depth_grid`, `merge_max` | unit tests |
-| Area weighting (rasters) | `exposure.area_weighted_depths` | unit tests on synthetic rasters |
+| Area weighting (rasters) | `exposure.area_weighted_depths` | unit tests on synthetic rasters; Hazus 5.1 runs from the Hazus Loss Library, within tolerances (`tests/test_hll_crosscheck.py`) |
 | `absp_GBSInsertAW` | `exposure.area_weighted_rows`, `shelter.shelter_result` | SQL, 1e-12 |
 | Damage functions (`flDmgFinal`) | `ddf.build_dmg_final` | SQL, exact |
 | GBS (14 tables) | `gbs.run_gbs` | SQL, zero integer difference |

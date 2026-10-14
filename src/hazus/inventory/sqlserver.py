@@ -29,6 +29,15 @@ FLOOD_TABLES = [
     "hzPotableWaterFlty", "flPotableWaterFlty", "hzWasteWaterFlty", "flWasteWaterFlty", "hzOilFlty", "flOilFlty",
     "hzNaturalGasFlty", "flNaturalGasFlty", "hzElectricPowerFlty", "flElectricPowerFlty",
 ]
+_FACILITY_TABLES = FLOOD_TABLES[FLOOD_TABLES.index("hzCareFlty"):]
+
+# Tables of a FEMA state inventory database that study-region creation reads (hazus.inventory.region).
+STATE_TABLES = [
+    "hzCounty", "hzTract", "hzCensusBlock", "hzCensusBlock_TIGER", "hzDemographicsB",
+    "hzExposureOccupB", "hzExposureContentOccupB", "hzBldgCountOccupB", "hzSqFootageOccupB",
+    "hzGenBldgSchemes", "hzGenBldgScheme", "flSchemeInfo", "flSchemeMapping", "flSchemeRiverine",
+    "flSchemeCoastal", *_FACILITY_TABLES,
+]
 
 
 def connect(database: str, *, server: str | None = None, port: int | None = None, user: str | None = None,
@@ -104,3 +113,8 @@ def export_region(conn, out_dir: str | Path, tables: Iterable[str] = FLOOD_TABLE
         df.to_parquet(path, index=False)
         written[name] = path
     return written
+
+
+def export_state(conn, out_dir: str | Path) -> dict[str, Path]:
+    """Export a FEMA state inventory database (attached as e.g. ``[DC]``) for ``hazus.inventory.region``."""
+    return export_region(conn, out_dir, STATE_TABLES)

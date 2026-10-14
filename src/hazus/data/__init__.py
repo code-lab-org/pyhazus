@@ -29,4 +29,4 @@ def table(name: str) -> pd.DataFrame:
 
 
 def available() -> list[str]:
-    return sorted(p.stem for p in DATA_DIR.glob("*.parquet"))
+    return sorted(p.stem for p in DATA_DIR.glob("*.parquet") if not p.stem.startswith("_"))

@@ -95,6 +95,38 @@ hazus inventory export DC_Region work/regions/DC
 It streams the database straight from the zip into the container, so the host needs no extra disk space.
 For DC (5,090 blocks) the aggregation takes about 2 minutes.
 
+`hazus inventory export-state DC states/DC` exports the attached state database for
+`hazus region create`, the Python port of these steps ([region.md](region.md)).
+`tests/test_sql_parity_region.py` compares the two table by table.
+
 `tests/test_sql_parity_state.py` uses such a region when `HAZUS_STATE_REGION_DB` names it. It exports the
 region, runs the Python pipeline on synthetic depth grids, and compares the results with the Hazus SQL
 run inside the region database.
+
+## 7. Cross-check fixtures from the Hazus Loss Library
+
+The [Hazus Loss Library](https://hazards.fema.gov/hazus-loss-library/) publishes 146 flood events. Its
+analyses were run with Hazus 4.2.3 or 5.1, none with 7.x. Each event has one or more Hazus Package Region
+files (`.hpr`, 84 MB to 1.4 GB). An HPR is a zip of the study-region folder. For every scenario it holds the
+depth grid (`<scenario>/Riverine/Depth/rpd<RP>`, an ESRI grid in feet). It also holds the raster
+intermediates (`blkgrid`, `reclass`), logs, Access result files, and a SQL Server backup of the region
+database (`<region>.bk`).
+
+```
+python tools/hll_fixture.py work/hll/download/lbgrandMO.hpr --out work/hll/fixtures
+HAZUS_HLL_FIXTURES=work/hll/fixtures pytest tests/test_hll_crosscheck.py
+```
+
+`tools/hll_fixture.py` restores the backup in the Docker SQL Server and exports the region and Hazus's
+`flAnAreaWeighted`. It then drops the database. The resulting fixture needs no SQL Server.
+
+Differences from 7.2 to keep in mind:
+
+- Hazus 5.1 area-weights in the depth grid's projected CRS (here UTM 15N) on the grid's own cells (4 ft);
+  7.2 uses EPSG:4326 and 0.00001° cells.
+- The 5.1 inventory follows the older census schema: construction decades up to `BuiltAfter98`, and age
+  groups `Less16` / `16to65` / `Over65`.
+- The 5.1 study case writes parameters to `flStudyCaseParms`.
+
+Losses from 5.1 regions therefore compare one version with another, not the port with Hazus 7.2.
+

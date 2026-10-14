@@ -6,6 +6,7 @@ SQL Server or Windows COM dependency at runtime.
 
 Status: early development. **Flood** (Hazus 7.2) is ported:
 
+- study-region creation from FEMA state inventories;
 - depth grids, scenario creation and area weighting;
 - general building stock: damage, economic loss, damage counts and depreciated loss (14 result tables);
 - essential facilities and utilities;
@@ -27,11 +28,25 @@ export Hazus databases from SQL Server.
 
 A study region is a directory with one Parquet file per Hazus table (`hzCensusBlock.parquet`,
 `flSchemeMapping.parquet`, `hzCareFlty.parquet`, ...). Census blocks, the boundary and facilities are
-GeoParquet in EPSG:4326. To get one from a Hazus study-region database attached to any SQL Server:
+GeoParquet in EPSG:4326.
 
-```bash
-hazus inventory export MyRegion region/
-```
+Create one from a FEMA state inventory (the Hazus state download, `<ST>.zip`):
+
+1. Export the state once from SQL Server. This is the only step that needs SQL Server; see
+   [docs/extraction.md](docs/extraction.md).
+
+   ```bash
+   hazus inventory export-state DC states/DC
+   ```
+
+2. Create regions without SQL Server, as Hazus's aggregation does (see [docs/region.md](docs/region.md)):
+
+   ```bash
+   hazus region create states/DC region/ --counties 11001
+   ```
+
+An existing Hazus study-region database can also be exported directly with
+`hazus inventory export MyRegion region/`.
 
 Run a single-event scenario:
 
@@ -73,6 +88,15 @@ would stop with an unhandled error, the port raises a clear exception instead, o
 SQL Server with the Hazus databases attached is reachable (`HAZUS_SA_PASSWORD` set; see
 [docs/extraction.md](docs/extraction.md)). They load synthetic study regions, run the original stored
 procedures, and compare every result table with the Python output. Integer results must match exactly.
+`tests/test_sql_parity_state.py` does the same on a study region that Hazus built from a FEMA state
+database.
+
+Area weighting (depth grid → flooded share of each block) runs in ArcGIS in Hazus, so there is no SQL to
+compare with. `tests/test_hll_crosscheck.py` compares it instead with Hazus 5.1 runs published in the
+[Hazus Loss Library](https://hazards.fema.gov/hazus-loss-library/). On the Little Blue River package
+(7 scenarios), it floods the same blocks. Flooded shares agree within 0.25 percentage points on average,
+and mean depths within 0.07 ft. Hazus 5.1 area-weights on the depth grid's own projected cells rather than
+7.2's 0.00001° cells, so these comparisons use tolerances.
 
 ## Layout
 

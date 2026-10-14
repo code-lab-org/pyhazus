@@ -24,4 +24,4 @@ dist/
 .ruff_cache/
 
 # State inventory downloads (FEMA Hazus state databases)
-data/
+/data/
