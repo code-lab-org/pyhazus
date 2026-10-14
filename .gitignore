@@ -1,0 +1,24 @@
+# FEMA installers and their extracted payloads (large, not redistributable as-is)
+*.exe
+*.msi
+*.msp
+*.cab
+*.mdf
+*.ldf
+*.bak
+extracted/
+decompiled/
+work/
+
+# Reference PDFs (download from FEMA)
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
