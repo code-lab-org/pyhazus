@@ -71,8 +71,11 @@ Port: `hazus.flood.exposure.area_weighted_rows` and `hazus.flood.shelter.shelter
 `tests/test_sql_parity_aw.py` loads synthetic `COASTALSECONDJOIN` / `BLKGRID` tables, runs the C# join and
 `absp_GBSInsertAW`, and matches both tables to 1e-12.
 
-Note: `PctAffected` is relative to **all block cells inside the study boundary**, not to the dasymetric
-area. *(TODO: confirm whether `hzCensusBlock` geometry is already dasymetric in the state DB.)*
+`PctAffected` is relative to the block's cells inside the study boundary. Those cells come from
+`hzCensusBlock`, whose geometry is already **dasymetric**: the state databases keep the full TIGER block
+shapes separately in `hzCensusBlock_TIGER`. In the DC state database, the 5,090 dasymetric blocks cover
+62 % of the TIGER block area, and no block shape is identical to its TIGER shape. So `PctAffected` is the
+flooded share of the block's developed area.
 
 ### 2d. Site-specific facilities (C#)
 

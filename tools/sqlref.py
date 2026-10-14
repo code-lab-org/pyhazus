@@ -37,10 +37,11 @@ def execute(sql: str, params: tuple | None = None) -> None:
 
 
 def query(sql: str, params: tuple | None = None) -> pd.DataFrame:
-    with connect(DB) as conn, conn.cursor(as_dict=True) as cur:
+    with connect(DB) as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
-    return pd.DataFrame(rows)
+        columns = [d[0] for d in cur.description] if cur.description else []
+    return pd.DataFrame.from_records(rows, columns=columns)
 
 
 def dmg_final(haz_type: int) -> pd.DataFrame:
@@ -95,21 +96,35 @@ def load_study_region(region: dict[str, pd.DataFrame], area_weighted: pd.DataFra
     """Replace the scratch study region's inventory, area-weighted depths and results."""
     with connect(DB) as conn:
         with conn.cursor() as cur:
-            for name in REGION_TABLES + GBS_RESULT_TABLES + SCRATCH_TABLES:
+            for name in REGION_TABLES:
                 cur.execute(f"IF OBJECT_ID('{name}', 'U') IS NOT NULL DELETE FROM [{name}]")
         for name in REGION_TABLES:
             _insert(conn, name, region[name])
+    load_area_weighted(area_weighted, study_case_id, study_case_name)
+
+
+def load_area_weighted(area_weighted: pd.DataFrame, study_case_id: int = 1, study_case_name: str = "Test") -> None:
+    """Keep the study region's inventory; replace its area-weighted depths, study case and results."""
+    with connect(DB) as conn:
+        with conn.cursor() as cur:
+            for name in GBS_RESULT_TABLES + SCRATCH_TABLES:
+                cur.execute(f"IF OBJECT_ID('{name}', 'U') IS NOT NULL DELETE FROM [{name}]")
         _insert(conn, "flAnAreaWeighted", area_weighted)
         _insert(conn, "flStudyCase", pd.DataFrame({"StudyCaseID": [study_case_id],
                                                    "StudyCaseName": [study_case_name], "StudyCaseDesc": [""]}))
 
 
-def run_gbs(haz_type: int, study_case_name: str = "Test", analysis_opt_id: int = 0) -> dict[str, pd.DataFrame]:
-    """Run ``absp_GBSDoIt`` as Hazus 7.2 does and return its result tables (plus ``flLog``)."""
+def run_gbs(haz_type: int, study_case_name: str = "Test", analysis_opt_id: int = 0,
+            fetch_final: bool = False) -> dict[str, pd.DataFrame]:
+    """Run ``absp_GBSDoIt`` as Hazus 7.2 does and return its result tables (plus ``flLog``).
+
+    ``flGBSFinal`` (millions of rows for a real region) is only fetched with ``fetch_final=True``.
+    """
     execute("EXEC absp_GBSDoIt @RegionsPath=%s, @StudyCaseName=%s, @AnalysisBits=15, @AnalysisOptID=%d, "
             "@Debug='N', @haztype=%d, @RegDivide=0, @proccode=1",
             ("C:\\HazusData\\Regions\\Test", study_case_name, analysis_opt_id, haz_type))
-    out = {name: query(f"SELECT * FROM [{name}]") for name in GBS_RESULT_TABLES}
+    out = {name: query(f"SELECT * FROM [{name}]") for name in GBS_RESULT_TABLES
+           if fetch_final or name != "flGBSFinal"}
     out["flLog"] = query("SELECT * FROM flLog")
     return out
 

@@ -153,9 +153,17 @@ All of these were verified against SQL Server 2022.
   `…DepEcLossBySOccup`) are **truncated** toward zero.
 - Products follow T-SQL's strict left-to-right evaluation order. Reassociating them changes float32
   roundings, which shows up after truncation.
+- `ROUND(float, d)`, and storing a float in a `NUMERIC(p, d)` column, round the float's **exact binary
+  value** half away from zero. `ROUND(2.675, 2)` is 2.67 and `ROUND(0.49999999999999994, 0)` is 0, because
+  those doubles lie just below the half. `floor(x × 10^d + 0.5)` gets both wrong (`gbs.sql_round`).
+- `int * 1.0 / int` is a **numeric** division, not a float one. Its result (scale 12 for `int` operands) is
+  **truncated**: `2 * 1.0 / 3` is 0.666666666666. Shelter's income shares are computed this way, and
+  truncating them can turn an exact integer into the integer below.
 
 `hazus.flood.gbs` follows these rules. `tests/test_sql_parity_gbs.py` checks all 14 result tables with zero
 integer tolerance against the original procedures on synthetic regions (riverine, coastal, both).
+`tests/test_sql_parity_state.py` does the same on a region that Hazus built from a FEMA state database.
+The last two rules showed up only with real data.
 
 ## 4. Downstream result tables
 

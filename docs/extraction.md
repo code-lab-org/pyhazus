@@ -65,8 +65,36 @@ set DOTNET_ROLL_FORWARD=Major
 ilspycmd -p -o decompiled\7.2\Hazus.Logic extracted\proconfig72\Install\Hazus.Logic.dll
 ```
 
-## 5. Export the databases (pending)
+## 5. Export the databases
 
 Attach `Hazus_model_Primary.mdf`, `flTmpDB_Primary.mdf` and `syHazus_Primary.mdf` to SQL Server 2022
 (Docker `mcr.microsoft.com/mssql/server:2022-latest`). Then export the tables to Parquet and the module
-definitions to `.sql`. The procedure text is not encrypted.
+definitions to `.sql` with `tools/export_db.py`. The procedure text is not encrypted.
+`tools/build_data.py` copies the lookup tables the library needs into `src/hazus/data/hazus72/`.
+
+## 6. Real study regions from FEMA state downloads
+
+The state inventory downloads (`<ST>.zip`) each contain one SQL Server database, `<ST>.mdf`, plus a
+hurricane wind file. Hazus builds a study region from it entirely in T-SQL:
+
+1. `syHazus..AggregateByCounty` (or `…ByState`, `…ByTract`, `…ByCensusBlock`) reads `syStateSel` /
+   `syCountySel`.
+2. It calls `AggregateAll` in a fresh copy of the region template. That procedure creates synonyms for the
+   state tables, copies each one through `_<table>_Aggregate`, builds the boundary and runs the
+   post-processing (`absp_StudyRgnCreationPostProcess*`), which computes the depreciated exposure
+   `flDepExposureOccupB` / `flDepExposureContentOccupB`.
+
+`tools/make_region.py` runs the same steps in the Docker SQL Server, with the flags Hazus uses (flood and
+earthquake always; hurricane and tsunami where the state has them):
+
+```
+python tools/make_region.py DC data/DC.zip --name DC_Region
+hazus inventory export DC_Region work/regions/DC
+```
+
+It streams the database straight from the zip into the container, so the host needs no extra disk space.
+For DC (5,090 blocks) the aggregation takes about 2 minutes.
+
+`tests/test_sql_parity_state.py` uses such a region when `HAZUS_STATE_REGION_DB` names it. It exports the
+region, runs the Python pipeline on synthetic depth grids, and compares the results with the Hazus SQL
+run inside the region database.

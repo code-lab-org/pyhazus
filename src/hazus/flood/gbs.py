@@ -16,6 +16,7 @@ truncated toward zero.
 
 from __future__ import annotations
 
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Mapping
 
 import numpy as np
@@ -50,10 +51,21 @@ def sql_int(x) -> np.ndarray:
 
 
 def sql_round(x, digits: int = 0) -> np.ndarray:
-    """T-SQL ROUND on a float: half away from zero."""
+    """T-SQL ROUND on a float, which is also how a float is stored in a NUMERIC column.
+
+    SQL Server rounds the float's exact binary value half away from zero: ``ROUND(2.675, 2)`` is 2.67 because
+    the double nearest 2.675 is slightly below it.
+    """
     x = np.asarray(x, dtype="float64")
     f = 10.0 ** digits
-    return np.sign(x) * np.floor(np.abs(x) * f + 0.5) / f
+    out = np.sign(x) * np.floor(np.abs(x) * f + 0.5) / f
+    # |x| * f is itself rounded; settle the values that land near a half with exact decimal arithmetic
+    t = np.abs(x) * f
+    near = np.abs(t - np.floor(t) - 0.5) < 1e-6
+    if near.any():
+        quantum = Decimal(1).scaleb(-digits)
+        out[near] = [float(Decimal(v).quantize(quantum, ROUND_HALF_UP)) for v in x[near]]
+    return out
 
 
 def _round_f32(x: np.ndarray) -> np.ndarray:

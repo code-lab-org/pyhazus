@@ -8,7 +8,8 @@ Port of ``CalculateDebris`` (Hazus 7.2). Quirks kept from the SQL:
   type only**: every scheme of that block type in the state is joined, not the block's own scheme.
 * Pre-FIRM and Coastal-A post-FIRM tons apply to hazard types 1–3 (R, A, CA). V-zone post-FIRM tons apply to
   hazard type 4 (CV) only.
-* Results are ``NUMERIC(19,2)``.
+* Results are ``NUMERIC(19,2)``: SQL Server rounds the float sum's exact binary value half away from zero, so
+  a sum stored as 2695.74499999999989 becomes 2695.74.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from hazus.data import table
-from hazus.flood.gbs import _pre_post_bldg, _pre_post_pct, _strip, unpivot_area_weighted
+from hazus.flood.gbs import _pre_post_bldg, _pre_post_pct, _strip, sql_round, unpivot_area_weighted
 
 SLAB = {"Fill", "Slab"}
 FOOTING = {"Basement", "Crawl", "Pier", "Pile", "SolidWall"}
@@ -125,6 +126,5 @@ def calculate_debris(region: Mapping[str, pd.DataFrame], area_weighted: pd.DataF
     keys = ["CensusBlock", "StudyCaseId", "AnalysisOptId", "ReturnPeriodID", "TypeOfHaz"]
     res = out.groupby(keys, as_index=False)[TONS].sum(min_count=1)
     for c in TONS:
-        x = res[c].to_numpy("float64")
-        res[c] = np.sign(x) * np.floor(np.abs(x) * 100 + 0.5) / 100  # NUMERIC(19,2)
+        res[c] = sql_round(res[c].to_numpy("float64"), 2)  # NUMERIC(19,2)
     return res.rename(columns={"ReturnPeriodID": "ReturnPeriodId"})

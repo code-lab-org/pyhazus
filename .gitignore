@@ -22,3 +22,6 @@ build/
 dist/
 .pytest_cache/
 .ruff_cache/
+
+# State inventory downloads (FEMA Hazus state databases)
+data/

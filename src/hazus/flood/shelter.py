@@ -10,6 +10,9 @@ Port of ``absp_GBSInsertAW`` (its ``flAnShelterResult`` part) and of ``absp_SHRD
 * The income terms use the full block population, not the displaced share. The result is then capped at
   the displaced population.
 * The ``IncOver40`` term is not multiplied by population, so after truncation it is always 0.
+* The income share ``Inc_k * 1.0 / Households`` is a *numeric* division, truncated to 12 decimals, before the
+  float factor and population multiply it. So a term that is exactly an integer can come out just below it
+  and be truncated to the integer below (``10/68 × 0.4 × 153`` gives 8, not 9).
 * In a riverine-and-coastal case a block has two ``flAnShelterResult`` rows (R and C). Population uses
   their summed area share, while the demographic terms are counted once per row.
 """
@@ -22,8 +25,10 @@ import numpy as np
 import pandas as pd
 
 from hazus.data import table
+from hazus.flood.gbs import sql_round
 
 F32 = np.float32
+_NUMERIC_SCALE = 10 ** 12  # scale of int * 1.0 / int in SQL Server (numeric(24,12))
 AGE_CLASSES = ["MaleLess18", "Male18to64", "MaleOver64", "FemaleLess18", "Female18to64", "FemaleOver64"]
 INC_CLASSES = ["IncLess10", "Inc10to20", "Inc20to30", "Inc30to40", "IncOver40"]
 
@@ -69,9 +74,12 @@ def run_shelter(region: Mapping[str, pd.DataFrame], shelter_results: pd.DataFram
     def col(name):
         return d[name].fillna(0).to_numpy("float64")
 
-    def share(num):  # ISNULL(x * 1.0 / NULLIF(Households, 0), 0)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            return np.where(hh != 0, num / np.where(hh != 0, hh, 1), 0.0)
+    def share(num):
+        # ISNULL(x * 1.0 / NULLIF(Households, 0), 0): `* 1.0` makes this a numeric division, whose result
+        # (scale 12) SQL Server truncates. The quotient is exact here; Python's int / int rounds it to float
+        # the way SQL Server converts numeric to float.
+        return np.array([(int(a) * _NUMERIC_SCALE) // int(b) / _NUMERIC_SCALE if b else 0.0
+                         for a, b in zip(num, hh)], dtype="float64")
 
     base = d[["StudyCaseId", "ReturnPeriodID", "CensusBlock", "AnalysisOptId"]]
     zeros = np.zeros(len(d))
@@ -109,14 +117,10 @@ def run_shelter(region: Mapping[str, pd.DataFrame], shelter_results: pd.DataFram
     fin = over.merge(population, on=["CensusBlock", "StudyCaseId", "ReturnPeriodID", "AnalysisOptId"])
     disp = fin["Population"].to_numpy("float64")
     need = disp * fin["OverAllFactors"].to_numpy("float64")
-    dp = _round(disp)
-    stn = _round(need)
+    dp = sql_round(disp)
+    stn = sql_round(need)
     shelter = pd.DataFrame({"StudyCaseId": fin["StudyCaseId"], "ReturnPeriodId": fin["ReturnPeriodID"],
                             "CensusBlock": fin["CensusBlock"], "DisplacedPop": dp,
                             "ShortTermNeeds": np.where(stn > dp, dp, stn), "AnalysisOptId": fin["AnalysisOptId"]})
     return {"flFRShelter": shelter, "flAnShrPopulation": population, "flAnShrfactors": factors.drop(columns="_term")}
 
-
-def _round(x: np.ndarray) -> np.ndarray:
-    """T-SQL ROUND(float, 0): half away from zero."""
-    return np.sign(x) * np.floor(np.abs(x) + 0.5)
