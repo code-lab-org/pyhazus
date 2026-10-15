@@ -80,13 +80,40 @@ def _occupancies() -> pd.DataFrame:
     return cls[["SOccup", "SortOrder"]]
 
 
-def _occ_column(region: Region, name: str, suffix: str, blocks: pd.Series, occ: pd.Series) -> np.ndarray:
-    """Per-row value of the block's ``{SOccup}{suffix}`` column in a ``*OccupB`` table (NaN if missing)."""
-    t = region[name].copy()
-    t["CensusBlock"] = _strip(t["CensusBlock"])
-    long = t.melt(id_vars="CensusBlock", var_name="col", value_name="v")
-    key = pd.DataFrame({"CensusBlock": blocks.to_numpy(), "col": (occ + suffix).to_numpy()})
-    return key.merge(long, on=["CensusBlock", "col"], how="left")["v"].to_numpy(dtype="float64")
+def _occ_positions(occid: np.ndarray) -> tuple[list[str], np.ndarray]:
+    """Specific occupancies in ``ClSOccupancy`` order, and each row's position among them (-1 if unknown)."""
+    occ = _occupancies()
+    lut = np.full(int(max(occ["SortOrder"].max(), occid.max(initial=0))) + 1, -1)
+    lut[occ["SortOrder"].to_numpy("int64")] = np.arange(len(occ))
+    return list(occ["SOccup"]), lut[occid]
+
+
+def _occ_column(region: Region, name: str, suffix: str, occs: list[str], uniques, codes: np.ndarray,
+                occ_pos: np.ndarray) -> np.ndarray:
+    """Per-row value of the block's ``{SOccup}{suffix}`` column in a ``*OccupB`` table (NaN if missing).
+
+    Rows are given as ``codes`` into the block ids ``uniques`` (``pd.factorize``) and positions in ``occs``.
+    """
+    t = region[name]
+    index = pd.Index(_strip(t["CensusBlock"]))
+    values = np.full((len(t), len(occs)), np.nan)
+    for j, o in enumerate(occs):
+        if f"{o}{suffix}" in t.columns:
+            values[:, j] = t[f"{o}{suffix}"].to_numpy("float64", na_value=np.nan)
+    rows = index.get_indexer(uniques)[codes]
+    ok = (rows >= 0) & (occ_pos >= 0)
+    out = np.full(len(codes), np.nan)
+    out[ok] = values[rows[ok], occ_pos[ok]]
+    return out
+
+
+def _blocks_in_all(region: Region, blocks: np.ndarray) -> np.ndarray:
+    """Which of ``blocks`` appear in every exposure table (the ``flGBSXResults*`` inner joins)."""
+    keep = np.ones(len(blocks), dtype=bool)
+    for name in ("hzExposureContentOccupB", "hzExposureOccupB", "hzBldgCountOccupB", "hzSqFootageOccupB",
+                 "flDepExposureOccupB", "flDepExposureContentOccupB"):
+        keep &= pd.Index(blocks).isin(_strip(region[name]["CensusBlock"]).unique())
+    return keep
 
 
 # ------------------------------------------------------------------------------------------- base prep
@@ -215,21 +242,21 @@ def _merge_calcs(nrds: pd.DataFrame, ppaw: pd.DataFrame, region: Region, with_de
         g["DecadeID"] = 0
 
     # Blocks must appear in every exposure table (flGBSXResults* inner joins).
-    blocks = set(g["CensusBlock"])
-    for name in ("hzExposureContentOccupB", "hzExposureOccupB", "hzBldgCountOccupB", "hzSqFootageOccupB",
-                 "flDepExposureOccupB", "flDepExposureContentOccupB"):
-        blocks &= set(_strip(region[name]["CensusBlock"]))
-    g = g[g["CensusBlock"].isin(blocks)].reset_index(drop=True)
+    codes, uniques = pd.factorize(g["CensusBlock"])
+    g = g[(codes >= 0) & _blocks_in_all(region, uniques)[codes]].reset_index(drop=True)
+    codes, uniques = pd.factorize(g["CensusBlock"])
+    occid = g["OCCID"].to_numpy("int64")
+    occs, occ_pos = _occ_positions(occid)
 
-    occ = _occupancies().set_index("SortOrder")["SOccup"]
-    soccup = g["OCCID"].map(occ)
-    blk = g["CensusBlock"]
-    sqft = _occ_column(region, "hzSqFootageOccupB", "F", blk, soccup).astype(F32).astype("float64")  # REAL column
-    eob = _occ_column(region, "hzExposureOccupB", "I", blk, soccup)
-    ecob = _occ_column(region, "hzExposureContentOccupB", "I", blk, soccup)
-    bcob = _occ_column(region, "hzBldgCountOccupB", "I", blk, soccup)
-    deob = _occ_column(region, "flDepExposureOccupB", "I", blk, soccup)
-    decob = _occ_column(region, "flDepExposureContentOccupB", "I", blk, soccup)
+    def occ_column(name, suffix):
+        return _occ_column(region, name, suffix, occs, uniques, codes, occ_pos)
+
+    sqft = occ_column("hzSqFootageOccupB", "F").astype(F32).astype("float64")  # REAL column
+    eob = occ_column("hzExposureOccupB", "I")
+    ecob = occ_column("hzExposureContentOccupB", "I")
+    bcob = occ_column("hzBldgCountOccupB", "I")
+    deob = occ_column("flDepExposureOccupB", "I")
+    decob = occ_column("flDepExposureContentOccupB", "I")
 
     pre = g["PrePct"].to_numpy("float64")
     post = g["PostPct"].to_numpy("float64")
@@ -263,10 +290,13 @@ def _merge_calcs(nrds: pd.DataFrame, ppaw: pd.DataFrame, region: Region, with_de
     if inventory:
         psi = table("flBldgEconParamSalesAndInv")
         psi["Occupancy"] = _strip(psi["Occupancy"])
-        p = pd.DataFrame({"SOccup": soccup}).merge(psi, left_on="SOccup", right_on="Occupancy", how="left")
-        sales = p["AnnualSalesPerSqFt"].fillna(0).to_numpy("float64")
-        invpct = p["BusinessInvPctofSales"].fillna(0).to_numpy("float64") / 100.0
-        is_inv = g["OCCID"].isin(INV_OCCIDS).to_numpy()
+        p = pd.DataFrame({"SOccup": occs}).merge(psi, left_on="SOccup", right_on="Occupancy", how="left")
+        if len(p) != len(occs):
+            raise ValueError("flBldgEconParamSalesAndInv has duplicate occupancies")
+        # per occupancy, plus a trailing 0 for rows without one (position -1)
+        sales = np.append(p["AnnualSalesPerSqFt"].fillna(0).to_numpy("float64"), 0.0)[occ_pos]
+        invpct = np.append(p["BusinessInvPctofSales"].fillna(0).to_numpy("float64"), 0.0)[occ_pos] / 100.0
+        is_inv = np.isin(occid, list(INV_OCCIDS))
 
         def inv_amount(share):
             # SqFt*(share/100)*(PctAffected/100)*PctDmgInvC*Sales*(InvPct/100), strictly left to right
@@ -305,7 +335,8 @@ def base_prep(region: Region, area_weighted: pd.DataFrame, dmg_final: pd.DataFra
     demo = region["hzDemographicsB"].copy()
     demo["CensusBlock"] = _strip(demo["CensusBlock"])
 
-    used_schemes = set(scheme.loc[scheme["CensusBlock"].isin(aw_t["CensusBlock"]), "SchemeId"])
+    aw_blocks = aw_t["CensusBlock"].unique()
+    used_schemes = set(scheme.loc[scheme["CensusBlock"].isin(aw_blocks), "SchemeId"])
     used_haz = set(aw["HazTypeID"])
     dec = table("flDecadeDescription")
     myb = demo[["CensusBlock", "MedianYearBuilt"]].dropna()
@@ -323,7 +354,7 @@ def base_prep(region: Region, area_weighted: pd.DataFrame, dmg_final: pd.DataFra
     rds = _dist_damage(dmg_final, dist_r, used_schemes, used_haz, with_decade=False)
 
     # pre/post-FIRM split per block (only blocks in the study case, demographics and scheme mapping)
-    ppb = _pre_post_bldg(demo[demo["CensusBlock"].isin(aw_t["CensusBlock"])], scheme)
+    ppb = _pre_post_bldg(demo[demo["CensusBlock"].isin(aw_blocks)], scheme)
     ppp = _pre_post_pct(ppb, scheme)
 
     typeofhaz = aw["HazTypeID"].map({1: 1, 2: 2, 3: 2, 4: 2, 5: 5, 6: 6, 7: 7})
@@ -422,18 +453,23 @@ def dmg_counts(final: pd.DataFrame, region: Region) -> dict[str, pd.DataFrame]:
 
 def base_tab(final: pd.DataFrame, region: Region) -> pd.DataFrame:
     """``absf_GBSBaseTabT``: exposure, content exposure, count, depreciated values and sq ft per block × occupancy."""
-    blocks = pd.Series(sorted(set(final["CensusBlock"])), name="CensusBlock")
-    for name in ("hzExposureOccupB", "hzExposureContentOccupB", "hzBldgCountOccupB", "flDepExposureOccupB",
-                 "flDepExposureContentOccupB", "hzSqFootageOccupB"):
-        blocks = blocks[blocks.isin(set(_strip(region[name]["CensusBlock"])))]
+    blocks = np.sort(final["CensusBlock"].unique().astype(object))
+    blocks = pd.Series(blocks[_blocks_in_all(region, blocks)].tolist(), name="CensusBlock")
     occ = _occupancies()
+    occs = list(occ["SOccup"])
     x = pd.DataFrame({"CensusBlock": blocks}).merge(occ[["SOccup"]], how="cross")
-    x["Exposure"] = _occ_column(region, "hzExposureOccupB", "I", x["CensusBlock"], x["SOccup"])
-    x["ExpCont"] = _occ_column(region, "hzExposureContentOccupB", "I", x["CensusBlock"], x["SOccup"])
-    x["BldgCnt"] = _occ_column(region, "hzBldgCountOccupB", "I", x["CensusBlock"], x["SOccup"])
-    x["DepExp"] = _occ_column(region, "flDepExposureOccupB", "I", x["CensusBlock"], x["SOccup"])
-    x["DepExpCont"] = _occ_column(region, "flDepExposureContentOccupB", "I", x["CensusBlock"], x["SOccup"])
-    x["SqFt"] = _occ_column(region, "hzSqFootageOccupB", "F", x["CensusBlock"], x["SOccup"]).astype(F32)
+    codes, uniques = pd.factorize(x["CensusBlock"])
+    occ_pos = pd.Index(occs).get_indexer(x["SOccup"])
+
+    def occ_column(name, suffix):
+        return _occ_column(region, name, suffix, occs, uniques, codes, occ_pos)
+
+    x["Exposure"] = occ_column("hzExposureOccupB", "I")
+    x["ExpCont"] = occ_column("hzExposureContentOccupB", "I")
+    x["BldgCnt"] = occ_column("hzBldgCountOccupB", "I")
+    x["DepExp"] = occ_column("flDepExposureOccupB", "I")
+    x["DepExpCont"] = occ_column("flDepExposureContentOccupB", "I")
+    x["SqFt"] = occ_column("hzSqFootageOccupB", "F").astype(F32)
     return x
 
 

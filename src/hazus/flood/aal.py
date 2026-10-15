@@ -14,10 +14,12 @@ so it equals the "Concrete" row. Pass ``wood_uses_concrete_pct=False`` to use ``
 
 from __future__ import annotations
 
+import math
 from decimal import ROUND_HALF_UP, Decimal, getcontext
 from fractions import Fraction
 from typing import Iterable, Mapping
 
+import numpy as np
 import pandas as pd
 
 getcontext().prec = 38
@@ -48,34 +50,49 @@ def aal_coefficients_decimal(return_periods: Iterable[int]) -> dict[int, Decimal
     return coefs
 
 
-def _round_half_away(x: Fraction) -> int:
-    n = abs(x)
-    r = int(n + Fraction(1, 2))
-    return r if x >= 0 else -r
-
-
 def aal_by_soccup(ecloss_soccup: pd.DataFrame, coefficients: Mapping[int, Decimal]) -> pd.DataFrame:
-    """``flFRGBSEcLossBySOccup`` rows with ``ReturnPeriodId = 'Annual'``."""
-    df = ecloss_soccup.copy()
-    rp = pd.to_numeric(df["ReturnPeriodId"].astype(str).str.strip(), errors="coerce")
-    df = df[rp.isin(list(coefficients))].assign(ReturnPeriod=rp.astype("Int64"))
-    part_keys = ["StudyCaseId", "CensusBlock", "ControlHazard", "SOccup", "Pre_PostFirm", "AnalysisOptId"]
-    df = df.groupby(part_keys + ["ReturnPeriod"], as_index=False)[ECON_COLS].sum()
-    coef = {int(k): Fraction(v) for k, v in coefficients.items()}
+    """``flFRGBSEcLossBySOccup`` rows with ``ReturnPeriodId = 'Annual'``.
 
-    rows = []
-    for key, g in df.sort_values("ReturnPeriod", ascending=False).groupby(part_keys, sort=False):
-        totals = dict.fromkeys(ECON_COLS, Fraction(0))
-        prev = None
-        for r in g.itertuples(index=False):
-            c = coef[int(r.ReturnPeriod)]
-            for col in ECON_COLS:
-                v = int(getattr(r, col))
-                totals[col] += c * v if prev is None else c * (v + int(getattr(prev, col))) / 2
-            prev = r
-        rows.append({**dict(zip(part_keys, key)), "ReturnPeriodId": "Annual",
-                     **{col: _round_half_away(totals[col]) for col in ECON_COLS}})
-    return pd.DataFrame(rows, columns=part_keys + ["ReturnPeriodId"] + ECON_COLS)
+    The sum is exact: with coefficients ``C / L`` (``L`` their common denominator), ``2 L × AAL`` is the
+    integer ``Σ 2 C v`` (longest period) ``+ Σ C (v + v_longer)``, rounded half away from zero by integer
+    division. Python integers take over if int64 could overflow.
+    """
+    rp = pd.to_numeric(ecloss_soccup["ReturnPeriodId"].astype(str).str.strip(), errors="coerce")
+    df = ecloss_soccup[rp.isin(list(coefficients))].assign(ReturnPeriod=rp.astype("Int64"))
+    part_keys = ["StudyCaseId", "CensusBlock", "ControlHazard", "SOccup", "Pre_PostFirm", "AnalysisOptId"]
+    columns = part_keys + ["ReturnPeriodId"] + ECON_COLS
+    df = df.groupby(part_keys + ["ReturnPeriod"], as_index=False)[ECON_COLS].sum()
+    if df.empty:
+        return pd.DataFrame(columns=columns)
+
+    # groups in order of first appearance after sorting by return period, longest period first within each
+    df = df.sort_values("ReturnPeriod", ascending=False)
+    gid = df.groupby(part_keys, sort=False).ngroup().to_numpy()
+    periods = df["ReturnPeriod"].to_numpy("int64")
+    order = np.lexsort((-periods, gid))
+    gid, periods = gid[order], periods[order]
+    values = df[ECON_COLS].to_numpy("int64")[order]
+
+    fractions = {int(k): Fraction(v) for k, v in coefficients.items()}
+    denominator = math.lcm(*(f.denominator for f in fractions.values()))
+    scaled = {k: f.numerator * (denominator // f.denominator) for k, f in fractions.items()}
+    bound = 2 * int(np.abs(values).max(initial=0)) * sum(abs(c) for c in scaled.values()) + denominator
+    dtype = "int64" if bound < 2 ** 62 else object
+    values = values.astype(dtype)
+    coef = np.array([scaled[int(p)] for p in periods], dtype=dtype)[:, None]
+
+    first = np.r_[True, gid[1:] != gid[:-1]]
+    longer = np.roll(values, 1, axis=0)
+    longer[first] = values[first]  # the longest period counts twice: 2 C v
+    starts = np.flatnonzero(first)
+    totals = np.add.reduceat(coef * (values + longer), starts, axis=0)
+    magnitude = (np.abs(totals) + denominator) // (2 * denominator)
+    rounded = np.where(totals >= 0, magnitude, -magnitude).astype("int64")
+
+    out = df.iloc[order[starts]][part_keys].reset_index(drop=True).assign(ReturnPeriodId="Annual")
+    for j, col in enumerate(ECON_COLS):
+        out[col] = rounded[:, j]
+    return out[columns]
 
 
 def aal_gbs(ecloss_soccup: pd.DataFrame, coefficients: Mapping[int, Decimal], region: Mapping[str, pd.DataFrame],

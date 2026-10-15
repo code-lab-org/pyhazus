@@ -94,25 +94,33 @@ def snapped_grid(bounds: tuple[float, float, float, float], snap_transform, cell
     return Grid(left=ll_x, top=ll_y + height * cell, cell=cell, width=width, height=height)
 
 
-def _block_counts(blocks, grid: Grid, block_index: np.ndarray) -> np.ndarray:
-    """Total cell count of each block (the ``BLKGRID`` value table), rasterizing each block on its own window."""
+def _block_counts(blocks, grid: Grid, block_index: np.ndarray, cache: dict | None = None) -> np.ndarray:
+    """Total cell count of each block (the ``BLKGRID`` value table), rasterizing each block on its own window.
+
+    ``cache`` (block index → count) is reused by later calls on the same blocks and grid.
+    """
+    import rasterio
     from rasterio.features import rasterize
 
-    counts = np.zeros(len(block_index), dtype="int64")
+    cache = {} if cache is None else cache
     geoms = blocks.geometry.values
-    for k, i in enumerate(block_index):
-        geom = geoms[i]
-        r0, r1, c0, c1 = grid.window_for_bounds(*geom.bounds)
-        if r1 <= r0 or c1 <= c0:
-            continue
-        burned = rasterize([(geom, 1)], out_shape=(r1 - r0, c1 - c0), transform=grid.sub_transform(r0, c0),
-                           fill=0, dtype="uint8")
-        counts[k] = int(burned.sum())
-    return counts
+    with rasterio.Env():  # one GDAL environment for all the small rasterize calls
+        for i in block_index:
+            if i in cache:
+                continue
+            geom = geoms[i]
+            r0, r1, c0, c1 = grid.window_for_bounds(*geom.bounds)
+            if r1 <= r0 or c1 <= c0:
+                cache[i] = 0
+                continue
+            burned = rasterize([(geom, 1)], out_shape=(r1 - r0, c1 - c0), transform=grid.sub_transform(r0, c0),
+                               fill=0, dtype="uint8")
+            cache[i] = int(burned.sum())
+    return np.array([cache[i] for i in block_index], dtype="int64")
 
 
 def area_weighted_depths(blocks, flood: FloodRaster, *, block_id: str = "CensusBlock", boundary=None,
-                         cell: float = CELL_SIZE, tile: int = 2048) -> pd.DataFrame:
+                         cell: float = CELL_SIZE, tile: int = 2048, block_counts: dict | None = None) -> pd.DataFrame:
     """Percent of each census block's cells in each (zone, half-foot depth bin).
 
     Parameters
@@ -124,6 +132,9 @@ def area_weighted_depths(blocks, flood: FloodRaster, *, block_id: str = "CensusB
         Depth grid in feet, EPSG:4326 (see :func:`hazus.flood.hazard.prepare_depth_grid`).
     boundary:
         Optional study-region boundary geometry (``hzBoundary``). Defaults to the union of the blocks.
+    block_counts:
+        Optional dict to share block cell counts between calls on the same blocks (e.g. the grids of a
+        scenario). Counts are kept per block grid, so grids snapped differently do not mix.
 
     Returns
     -------
@@ -131,6 +142,7 @@ def area_weighted_depths(blocks, flood: FloodRaster, *, block_id: str = "CensusB
     (the long form of ``flAnGBSCombineAWTemp``).
     """
     import rasterio
+    import shapely
     from rasterio.features import rasterize
 
     blocks = blocks.reset_index(drop=True)
@@ -138,8 +150,12 @@ def area_weighted_depths(blocks, flood: FloodRaster, *, block_id: str = "CensusB
         blocks = blocks.to_crs(4326)
     hazard = HazardType(flood.hazard_type)
     sindex = blocks.sindex
+    geoms = blocks.geometry.values
+    local = np.zeros(len(blocks) + 1, dtype="int64")  # block value (index + 1) -> position in the tile's hits
+    if boundary is not None:
+        shapely.prepare(boundary)
 
-    with rasterio.open(flood.path) as ds:
+    with rasterio.open(flood.path) as ds, rasterio.Env():
         grid = snapped_grid(tuple(blocks.total_bounds), ds.transform, cell)
         dl, dt = ds.transform.c, ds.transform.f
         drx, dry = abs(ds.transform.a), abs(ds.transform.e)
@@ -155,50 +171,59 @@ def area_weighted_depths(blocks, flood: FloodRaster, *, block_id: str = "CensusB
                 tx0 = grid.left + tc * grid.cell
                 ty0 = grid.top - tr * grid.cell
                 tbox = (tx0, ty0 - h * grid.cell, tx0 + w * grid.cell, ty0)
-                hits = sindex.query(_box(*tbox))
+                tile_box = _box(*tbox)
+                if boundary is not None and not boundary.intersects(tile_box):
+                    continue  # no cell centre of this tile is inside the study region
+                hits = sindex.query(tile_box)
                 if len(hits) == 0:
                     continue
                 transform = grid.sub_transform(tr, tc)
-                blk = rasterize(((blocks.geometry.values[i], int(i) + 1) for i in hits), out_shape=(h, w),
+                blk = rasterize(((geoms[i], int(i) + 1) for i in hits), out_shape=(h, w),
                                 transform=transform, fill=0, dtype="int32")
                 if not blk.any():
                     continue
-                if boundary is not None:
-                    inside = rasterize([(boundary, 1)], out_shape=(h, w), transform=transform, fill=0,
-                                       dtype="uint8").astype(bool)
-                else:
-                    inside = blk > 0
 
-                # Nearest-neighbour resample: depth cell containing each block-grid cell centre.
+                # Nearest-neighbour resample: depth cell containing each block-grid cell centre. The rows and
+                # columns that fall on the depth grid are contiguous (ra:rb, ca:cb); every other cell is NoData.
                 xs = tx0 + (np.arange(w) + 0.5) * grid.cell
                 ys = ty0 - (np.arange(h) + 0.5) * grid.cell
                 dcols = np.floor((xs - dl) / drx).astype("int64")
                 drows = np.floor((dt - ys) / dry).astype("int64")
-                col_ok = (dcols >= 0) & (dcols < ds.width)
-                row_ok = (drows >= 0) & (drows < ds.height)
-                if not col_ok.any() or not row_ok.any():
+                ci = np.flatnonzero((dcols >= 0) & (dcols < ds.width))
+                ri = np.flatnonzero((drows >= 0) & (drows < ds.height))
+                if len(ci) == 0 or len(ri) == 0:
                     continue
-                wc0, wc1 = dcols[col_ok].min(), dcols[col_ok].max() + 1
-                wr0, wr1 = drows[row_ok].min(), drows[row_ok].max() + 1
+                ca, cb, ra, rb = ci[0], ci[-1] + 1, ri[0], ri[-1] + 1
+                wc0, wc1 = dcols[ca], dcols[cb - 1] + 1
+                wr0, wr1 = drows[ra], drows[rb - 1] + 1
                 band = ds.read(1, window=((wr0, wr1), (wc0, wc1))).astype("float64")
                 if nodata is not None and not np.isnan(nodata):
                     band[band == nodata] = np.nan
-                depth = np.full((h, w), np.nan)
-                rr = np.clip(drows - wr0, 0, wr1 - wr0 - 1)
-                cc = np.clip(dcols - wc0, 0, wc1 - wc0 - 1)
-                depth_full = band[np.ix_(rr, cc)]
-                ok2d = np.outer(row_ok, col_ok)
-                depth[ok2d] = depth_full[ok2d]
-
+                # zone << 8 | bin, or -1 where not counted. Bin whichever is smaller: the depth cells (then
+                # resample the codes) or the resampled cells.
+                take = np.ix_(drows[ra:rb] - wr0, dcols[ca:cb] - wc0)
+                depth = band if band.size < (rb - ra) * (cb - ca) else band[take]
                 bins = depth_bin(depth)
-                valid = (blk > 0) & inside & (bins >= 0)
+                code = (zone_code(depth, hazard).astype("int64") << 8) | (bins // 50)
+                code[bins < 0] = -1
+                if depth is band:
+                    code = code[take]
+
+                b = blk[ra:rb, ca:cb]
+                valid = (b > 0) & (code >= 0)
+                if boundary is not None and not boundary.contains(tile_box):
+                    inside = rasterize([(boundary, 1)], out_shape=(h, w), transform=transform, fill=0,
+                                       dtype="uint8")
+                    valid &= inside[ra:rb, ca:cb].astype(bool)
                 if not valid.any():
                     continue
-                d = depth[valid]
-                zones = zone_code(d, hazard)
-                key = (blk[valid].astype("int64") << 16) | (zones.astype("int64") << 8) | (bins[valid] // 50)
-                uniq, counts = np.unique(key, return_counts=True)
-                parts.append(pd.DataFrame({"key": uniq, "Count": counts}))
+                # count per (block, zone, bin) with a bincount over the tile's own blocks
+                local[hits + 1] = np.arange(len(hits))
+                width = 5 << 8  # zone codes 1-4, bins 0-48
+                counts = np.bincount(local[b[valid]] * width + code[valid], minlength=len(hits) * width)
+                nz = np.flatnonzero(counts)
+                key = ((hits[nz // width].astype("int64") + 1) << 16) | (nz % width)
+                parts.append(pd.DataFrame({"key": key, "Count": counts[nz]}))
 
     if not parts:
         return pd.DataFrame(columns=["CensusBlock", "CoastalZone", "ReClass", "Count", "TotalCount", "PctAffected"])
@@ -210,7 +235,8 @@ def area_weighted_depths(blocks, flood: FloodRaster, *, block_id: str = "CensusB
     reclass = (keys & 0xFF) * 50
 
     flooded = np.unique(idx)
-    totals = pd.Series(_block_counts(blocks, grid, flooded), index=flooded)
+    cache = None if block_counts is None else block_counts.setdefault(grid, {})
+    totals = pd.Series(_block_counts(blocks, grid, flooded, cache), index=flooded)
 
     out = pd.DataFrame({
         "CensusBlock": blocks[block_id].to_numpy()[idx],

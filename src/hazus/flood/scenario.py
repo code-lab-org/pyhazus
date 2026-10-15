@@ -50,11 +50,12 @@ def area_weighting(blocks, rasters: Sequence[FloodRaster], *, boundary=None, stu
     ids = return_period_ids(rasters)
     aw: dict[tuple[str, str], pd.DataFrame] = {}
     sr: dict[tuple[str, str], pd.DataFrame] = {}
+    block_counts: dict = {}  # shared by grids that snap to the same block grid
     for period in sorted(ids):
         for raster in (r for r in rasters if int(r.return_period) == period):
             rp = ids[period]
             hazard = HazardType(raster.hazard_type).controlling_code
-            long = area_weighted_depths(blocks, raster, boundary=boundary)
+            long = area_weighted_depths(blocks, raster, boundary=boundary, block_counts=block_counts)
             # absp_GBSInsertAW replaces earlier rows of the same return period and hazard
             aw[rp, hazard] = area_weighted_rows(long, study_case_id=study_case_id, return_period=rp,
                                                 controlling_hazard=hazard, analysis_opt_id=analysis_opt_id)

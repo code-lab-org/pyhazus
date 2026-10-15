@@ -11,6 +11,7 @@ Mirrors ``create_flood_scenario.py`` (Hazus 7.2 Python toolbox) and the point re
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -20,6 +21,7 @@ import numpy as np
 
 FEET_PER_METER = 5000.0 / 1524.0
 WGS84 = "EPSG:4326"
+_POINT_TILE = 512  # cells: point reads are grouped into windows of at most this size
 
 
 class HazardType(str, Enum):
@@ -75,16 +77,17 @@ def to_feet(depth: np.ndarray, units: str) -> np.ndarray:
     raise ValueError(f"unknown depth units {units!r}")
 
 
-def prepare_depth_grid(src: str | Path, dst: str | Path, units: str = "feet", *, block: int = 1024) -> Path:
+def prepare_depth_grid(src: str | Path, dst: str | Path, units: str = "feet", *, block: int = 1024,
+                       threads: int | None = None) -> Path:
     """Write ``src`` as a float32 GeoTIFF in EPSG:4326 with depths in feet.
 
     Hazus uses ArcGIS ``ProjectRaster`` with nearest-neighbour resampling. Here the output grid size
     comes from GDAL's default transform, so cell boundaries can differ slightly from ArcGIS. Each output
     cell takes the source cell under its centre, computed exactly (no approximate transformer). The result
-    therefore does not depend on how the grid is split.
+    therefore does not depend on how the grid is split, nor on ``threads``.
 
     The grid is processed in ``block`` × ``block`` output windows, so memory use stays small for large
-    (e.g. 1 m lidar-based) depth grids.
+    (e.g. 1 m lidar-based) depth grids. GDAL warps and compresses with ``threads`` threads (default: all CPUs).
     """
     import rasterio
     from rasterio.warp import Resampling, calculate_default_transform, reproject, transform_bounds
@@ -100,7 +103,7 @@ def prepare_depth_grid(src: str | Path, dst: str | Path, units: str = "feet", *,
             transform, width, height = calculate_default_transform(ds.crs, WGS84, ds.width, ds.height, *ds.bounds)
         profile = dict(driver="GTiff", height=height, width=width, count=1, dtype="float32", crs=WGS84,
                        transform=transform, nodata=np.float32(np.nan), compress="deflate", tiled=True,
-                       blockxsize=256, blockysize=256, BIGTIFF="IF_SAFER")
+                       blockxsize=256, blockysize=256, BIGTIFF="IF_SAFER", NUM_THREADS=threads or "ALL_CPUS")
         whole = Window(0, 0, ds.width, ds.height)
         with rasterio.open(dst, "w", **profile) as out_ds:
             for row in range(0, height, block):
@@ -123,7 +126,8 @@ def prepare_depth_grid(src: str | Path, dst: str | Path, units: str = "feet", *,
                             data = ds.read(1, window=swin, masked=True).astype("float64").filled(np.nan)
                             reproject(source=data, destination=out, src_transform=ds.window_transform(swin),
                                       src_crs=ds.crs, src_nodata=np.nan, dst_transform=window_transform(win, transform),
-                                      dst_crs=WGS84, dst_nodata=np.nan, resampling=Resampling.nearest, tolerance=0)
+                                      dst_crs=WGS84, dst_nodata=np.nan, resampling=Resampling.nearest, tolerance=0,
+                                      num_threads=threads or os.cpu_count() or 1)
                     out_ds.write(to_feet(out, units).astype("float32"), 1, window=win)
     return dst
 
@@ -145,7 +149,8 @@ def merge_max(paths: Sequence[str | Path], dst: str | Path) -> Path:
             s.close()
     dst = Path(dst)
     profile = dict(driver="GTiff", height=mosaic.shape[1], width=mosaic.shape[2], count=1, dtype="float32",
-                   crs=WGS84, transform=transform, nodata=np.float32(np.nan), compress="deflate", tiled=True)
+                   crs=WGS84, transform=transform, nodata=np.float32(np.nan), compress="deflate", tiled=True,
+                   NUM_THREADS="ALL_CPUS")
     with rasterio.open(dst, "w", **profile) as out:
         out.write(mosaic[0], 1)
     return dst
@@ -229,9 +234,16 @@ def max_depth_at_points(rasters: Iterable[FloodRaster], xs: Sequence[float],
             cols = np.asarray(cols).astype("int64")
             inside = (rows >= 0) & (cols >= 0) & (rows < ds.height) & (cols < ds.width)
             values = np.full(len(xs), np.nan)
-            for k in np.flatnonzero(inside):  # one cell per point; the grid is never read whole
-                cell = ds.read(1, window=((rows[k], rows[k] + 1), (cols[k], cols[k] + 1)), masked=True)
-                values[k] = np.ma.filled(cell.astype("float64"), np.nan)[0, 0]
+            # one read per tile that holds points (the window spanning that tile's points); never the whole grid
+            k = np.flatnonzero(inside)
+            tile = (rows[k] // _POINT_TILE) * (ds.width // _POINT_TILE + 1) + cols[k] // _POINT_TILE
+            order = np.argsort(tile, kind="stable")
+            k, tile = k[order], tile[order]
+            for group in np.split(k, np.flatnonzero(np.diff(tile)) + 1) if len(k) else []:
+                r, c = rows[group], cols[group]
+                r0, c0 = r.min(), c.min()
+                cells = ds.read(1, window=((r0, r.max() + 1), (c0, c.max() + 1)), masked=True)
+                values[group] = np.ma.filled(cells.astype("float64"), np.nan)[r - r0, c - c0]
         higher = np.nan_to_num(values, nan=-np.inf) > depth
         depth[higher] = values[higher]
         hazard[higher] = fr.hazard_type.controlling_code
