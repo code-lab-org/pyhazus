@@ -95,10 +95,12 @@ database.
 
 Area weighting (depth grid → flooded share of each block) runs in ArcGIS in Hazus, so there is no SQL to
 compare with. `tests/test_hll_crosscheck.py` compares it instead with Hazus 5.1 runs published in the
-[Hazus Loss Library](https://hazards.fema.gov/hazus-loss-library/). On the Little Blue River package
-(7 scenarios), it floods the same blocks. Flooded shares agree within 0.25 percentage points on average,
-and mean depths within 0.07 ft. Hazus 5.1 area-weights on the depth grid's own projected cells rather than
-7.2's 0.00001° cells, so these comparisons use tolerances.
+[Hazus Loss Library](https://hazards.fema.gov/hazus-loss-library/). Two packages are covered: the Little
+Blue River in Missouri (7 scenarios, 4 ft grids) and Lake Ontario at Hamlin Beach in New York (5 scenarios,
+1 m grids of 35,175 × 5,915 cells, 252 of 670 blocks on the Great Lakes). In each scenario, flooded shares
+agree within 0.25 percentage points on average and mean depths within 0.07 ft. A block flooded by only a few
+cells (at most 0.13 % of the block) can appear on one side only. Hazus 5.1 area-weights on the depth grid's
+own projected cells rather than 7.2's 0.00001° cells, so these comparisons use tolerances.
 
 ## Layout
 

@@ -34,13 +34,17 @@ def _occ_table(blocks, occs, values, suffix, total_col):
 
 
 def make_region(seed: int = 0, n_blocks: int = 8, state_fips: str = "24", state_abbr: str = "MD",
-                coastal_share: float = 0.5) -> dict[str, pd.DataFrame]:
+                coastal_share: float = 0.5, lake_share: float = 0.0) -> dict[str, pd.DataFrame]:
+    """A random study region. ``lake_share`` of the blocks become Great Lakes blocks (type L, scheme
+    ``<ST>L00001``); use a state with Great Lakes schemes in ``flGBSDist*``, e.g. NY (36)."""
     rng = np.random.default_rng(seed)
     occs = occupancies()
     county = f"{state_fips}001"
     tract = f"{county}000100"
     blocks = [f"{tract}{1000 + i:04d}" for i in range(n_blocks)]
     btype = np.where(rng.random(n_blocks) < coastal_share, "C", "R")
+    if lake_share:  # separate generator: regions without lake blocks stay exactly as before
+        btype[np.random.default_rng(seed + 77).random(n_blocks) < lake_share] = "L"
 
     t = {}
     t["hzTract"] = pd.DataFrame({"Tract": [tract], "CountyFips": [county], "Tract6": [tract[5:]], "TractArea": [1.0]})
@@ -111,15 +115,19 @@ def make_region(seed: int = 0, n_blocks: int = 8, state_fips: str = "24", state_
 
 
 def make_area_weighted(region: dict[str, pd.DataFrame], seed: int = 0, study_case_id: int = 1,
-                       return_period: str = "-1", flood_share: float = 0.8) -> pd.DataFrame:
-    """Random ``flAnAreaWeighted`` rows: per block, one zone (R) or 1-3 coastal zones, a few depth bins."""
+                       return_period: str = "-1", flood_share: float = 0.8, lake_hazard: str = "C") -> pd.DataFrame:
+    """Random ``flAnAreaWeighted`` rows: per block, one zone (R) or 1-3 coastal zones, a few depth bins.
+
+    Great Lakes blocks are flooded as ``lake_hazard`` ("C": coastal zones, or "R": riverine, as in the
+    Hazus Loss Library's Lake Ontario analyses)."""
     rng = np.random.default_rng(seed + 1000)
     rows = []
     cb = region["hzCensusBlock"]
     for blk, bt in zip(cb["CensusBlock"], cb["BlockType"]):
         if rng.random() > flood_share:
             continue
-        zones = ["R"] if bt == "R" else list(rng.choice(["A", "CA", "CV"], size=rng.integers(1, 4), replace=False))
+        hazard = lake_hazard if bt == "L" else bt
+        zones = ["R"] if hazard == "R" else list(rng.choice(["A", "CA", "CV"], size=rng.integers(1, 4), replace=False))
         budget = 100.0
         for z in zones:
             row = dict.fromkeys(BIN_COLS, 0.0)
@@ -128,7 +136,7 @@ def make_area_weighted(region: dict[str, pd.DataFrame], seed: int = 0, study_cas
                 row[col] += v
                 budget -= v
             rows.append({"StudyCaseID": study_case_id, "CensusBlock": blk, "ReturnPeriodID": return_period,
-                         "ControllingHazard": "R" if bt == "R" else "C", "CoastalZone": z, **row,
+                         "ControllingHazard": hazard, "CoastalZone": z, **row,
                          "Proc_Order": 0, "AnalysisOptId": 0})
     return pd.DataFrame(rows)
 

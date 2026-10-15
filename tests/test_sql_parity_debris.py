@@ -17,12 +17,17 @@ TONS = ["PreFinishTons", "PostAFinishTons", "PostVFinishTons", "PreStructureTons
         "PostVStructureTons", "PreFoundationTons", "PostAFoundationTons", "PostVFoundationTons"]
 
 
-@pytest.mark.parametrize("rp, keep", [("-1", "R"), ("-1", "C"), ("mix0", None)])
-def test_debris_matches_sql(rp, keep):
+LAKES = {"state_fips": "36", "state_abbr": "NY", "coastal_share": 0.3, "lake_share": 0.5}
+
+
+@pytest.mark.parametrize("rp, keep, options, lake_hazard", [
+    ("-1", "R", {}, "C"), ("-1", "C", {}, "C"), ("mix0", None, {}, "C"),
+    ("-1", "R", LAKES, "R"), ("-1", "C", LAKES, "C")])
+def test_debris_matches_sql(rp, keep, options, lake_hazard):
     from hazus.flood.debris import calculate_debris
 
-    region = synth.make_region(seed=3, n_blocks=15)
-    aw = synth.make_area_weighted(region, seed=3, return_period=rp)
+    region = synth.make_region(seed=3, n_blocks=15, **options)
+    aw = synth.make_area_weighted(region, seed=3, return_period=rp, lake_hazard=lake_hazard)
     if keep:
         aw = aw[aw["ControllingHazard"] == keep]
     sqlref.load_study_region(region, aw)

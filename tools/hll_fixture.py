@@ -5,7 +5,8 @@ flood analyses as HPR files. An HPR is a zip of the region folder. It holds a SQ
 database, which includes Hazus's own ``flAnAreaWeighted``, and the depth grid of every scenario. This tool
 writes a self-contained fixture that ``tests/test_hll_crosscheck.py`` uses without SQL Server:
 
-    <out>/<name>/hpr/                          the extracted package (depth grids under <scenario>/*/Depth/)
+    <out>/<name>/hpr/                          the scenarios' depth grids (<scenario>/*/Depth/), or with
+                                               --keep-all the whole extracted package
     <out>/<name>/region/                       hazus.io study region (blocks, boundary, ...)
     <out>/<name>/reference/flAnAreaWeighted.parquet
     <out>/<name>/scenarios.csv                 StudyCaseID, StudyCaseName, ReturnPeriodID, hazard, depth_grid
@@ -90,6 +91,8 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=Path("work/hll/fixtures"))
     ap.add_argument("--name", help="fixture name (default: the HPR file name)")
     ap.add_argument("--keep-db", action="store_true", help="keep the restored database in SQL Server")
+    ap.add_argument("--keep-all", action="store_true",
+                    help="keep the whole extracted package (by default only the scenarios' depth grids are kept)")
     args = ap.parse_args()
     name = args.name or args.hpr.stem
     root = (args.out / name).resolve()
@@ -108,6 +111,11 @@ def main() -> None:
         if not args.keep_db:
             drop(database)
     backups[0].unlink()  # restored and exported; the fixture does not need it
+    # Hazus leaves the area-weighted rows of deleted study cases behind; keep the existing study cases only
+    orphans = sorted(set(aw["StudyCaseID"]) - set(cases["StudyCaseID"]))
+    if orphans:
+        print(f"skipping flAnAreaWeighted rows of deleted study cases {orphans}")
+    aw = aw[aw["StudyCaseID"].isin(cases["StudyCaseID"])].copy()
     aw["CensusBlock"] = aw["CensusBlock"].str.strip()
     (root / "reference").mkdir(exist_ok=True)
     aw.to_parquet(root / "reference" / "flAnAreaWeighted.parquet", index=False)
@@ -121,7 +129,25 @@ def main() -> None:
                      "hazard": "riverine" if hz.strip() == "R" else "coastal",
                      "depth_grid": grid.relative_to(root).as_posix()})
     pd.DataFrame(rows).to_csv(root / "scenarios.csv", index=False)
+    if not args.keep_all:
+        prune(hpr_dir, {root / r["depth_grid"] for r in rows})
     print(f"fixture {root}: {len(rows)} scenarios")
+
+
+def prune(hpr_dir: Path, keep: set[Path]) -> None:
+    """Delete everything of the extracted package except the depth grids the scenarios use. The raster
+    intermediates (``blkgrid``, ``reclass``) of large 1 m grids alone can take several GB."""
+    import shutil
+
+    keep = {k.resolve() for k in keep}
+    for path in sorted(hpr_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        r = path.resolve()
+        if any(r == k or k in r.parents or r in k.parents for k in keep):
+            continue
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

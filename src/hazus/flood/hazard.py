@@ -75,41 +75,56 @@ def to_feet(depth: np.ndarray, units: str) -> np.ndarray:
     raise ValueError(f"unknown depth units {units!r}")
 
 
-def prepare_depth_grid(src: str | Path, dst: str | Path, units: str = "feet") -> Path:
+def prepare_depth_grid(src: str | Path, dst: str | Path, units: str = "feet", *, block: int = 1024) -> Path:
     """Write ``src`` as a float32 GeoTIFF in EPSG:4326 with depths in feet.
 
     Hazus uses ArcGIS ``ProjectRaster`` with nearest-neighbour resampling. Here the output grid size
-    comes from GDAL's default transform, so cell boundaries can differ slightly from ArcGIS.
+    comes from GDAL's default transform, so cell boundaries can differ slightly from ArcGIS. Each output
+    cell takes the source cell under its centre, computed exactly (no approximate transformer). The result
+    therefore does not depend on how the grid is split.
+
+    The grid is processed in ``block`` × ``block`` output windows, so memory use stays small for large
+    (e.g. 1 m lidar-based) depth grids.
     """
     import rasterio
-    from rasterio.warp import Resampling, calculate_default_transform, reproject
+    from rasterio.warp import Resampling, calculate_default_transform, reproject, transform_bounds
+    from rasterio.windows import Window, bounds as window_bounds, from_bounds, transform as window_transform
 
     src, dst = Path(src), Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(src) as ds:
-        data = ds.read(1, masked=True).astype("float64")
-        if ds.crs and ds.crs.to_epsg() == 4326:
+        same_crs = bool(ds.crs) and ds.crs.to_epsg() == 4326
+        if same_crs:
             transform, width, height = ds.transform, ds.width, ds.height
-            out = data.filled(np.nan)
         else:
             transform, width, height = calculate_default_transform(ds.crs, WGS84, ds.width, ds.height, *ds.bounds)
-            out = np.full((height, width), np.nan, dtype="float64")
-            reproject(
-                source=data.filled(np.nan),
-                destination=out,
-                src_transform=ds.transform,
-                src_crs=ds.crs,
-                src_nodata=np.nan,
-                dst_transform=transform,
-                dst_crs=WGS84,
-                dst_nodata=np.nan,
-                resampling=Resampling.nearest,
-            )
-    out = to_feet(out, units).astype("float32")
-    profile = dict(driver="GTiff", height=height, width=width, count=1, dtype="float32", crs=WGS84,
-                   transform=transform, nodata=np.float32(np.nan), compress="deflate", tiled=True)
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    with rasterio.open(dst, "w", **profile) as out_ds:
-        out_ds.write(out, 1)
+        profile = dict(driver="GTiff", height=height, width=width, count=1, dtype="float32", crs=WGS84,
+                       transform=transform, nodata=np.float32(np.nan), compress="deflate", tiled=True,
+                       blockxsize=256, blockysize=256, BIGTIFF="IF_SAFER")
+        whole = Window(0, 0, ds.width, ds.height)
+        with rasterio.open(dst, "w", **profile) as out_ds:
+            for row in range(0, height, block):
+                for col in range(0, width, block):
+                    win = Window(col, row, min(block, width - col), min(block, height - row))
+                    if same_crs:
+                        out = ds.read(1, window=win, masked=True).astype("float64").filled(np.nan)
+                    else:
+                        out = np.full((int(win.height), int(win.width)), np.nan)
+                        # source cells that can fall under this window's cell centres, plus a margin
+                        sb = transform_bounds(WGS84, ds.crs, *window_bounds(win, transform), densify_pts=21)
+                        swin = from_bounds(*sb, transform=ds.transform)
+                        swin = Window(int(np.floor(swin.col_off)) - 2, int(np.floor(swin.row_off)) - 2,
+                                      int(np.ceil(swin.width)) + 5, int(np.ceil(swin.height)) + 5)
+                        try:
+                            swin = swin.intersection(whole)
+                        except rasterio.errors.WindowError:
+                            swin = None
+                        if swin is not None and swin.width > 0 and swin.height > 0:
+                            data = ds.read(1, window=swin, masked=True).astype("float64").filled(np.nan)
+                            reproject(source=data, destination=out, src_transform=ds.window_transform(swin),
+                                      src_crs=ds.crs, src_nodata=np.nan, dst_transform=window_transform(win, transform),
+                                      dst_crs=WGS84, dst_nodata=np.nan, resampling=Resampling.nearest, tolerance=0)
+                    out_ds.write(to_feet(out, units).astype("float32"), 1, window=win)
     return dst
 
 
@@ -209,14 +224,14 @@ def max_depth_at_points(rasters: Iterable[FloodRaster], xs: Sequence[float],
     hazard = np.full(len(xs), "R", dtype=object)
     for fr in rasters:
         with rasterio.open(fr.path) as ds:
-            band = ds.read(1, masked=True)
             rows, cols = rasterio.transform.rowcol(ds.transform, xs, ys, op=np.floor)
             rows = np.asarray(rows).astype("int64")  # floats with op=np.floor in recent rasterio
             cols = np.asarray(cols).astype("int64")
             inside = (rows >= 0) & (cols >= 0) & (rows < ds.height) & (cols < ds.width)
             values = np.full(len(xs), np.nan)
-            vals = band[rows[inside], cols[inside]]
-            values[inside] = np.ma.filled(vals.astype("float64"), np.nan)
+            for k in np.flatnonzero(inside):  # one cell per point; the grid is never read whole
+                cell = ds.read(1, window=((rows[k], rows[k] + 1), (cols[k], cols[k] + 1)), masked=True)
+                values[k] = np.ma.filled(cell.astype("float64"), np.nan)[0, 0]
         higher = np.nan_to_num(values, nan=-np.inf) > depth
         depth[higher] = values[higher]
         hazard[higher] = fr.hazard_type.controlling_code

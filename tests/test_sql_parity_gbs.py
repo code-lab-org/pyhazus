@@ -39,10 +39,13 @@ CHECKS = {
     "flFRGBSDepEcLossByGBldgType": (BT_KEYS, [], ["BuildingLoss", "ContentsLoss"]),
 }
 
-SCENARIOS = {
-    "riverine": (1, "-1", "R"),
-    "coastal": (2, "-1", "C"),
-    "both": (3, "mix0", None),
+LAKES = {"state_fips": "36", "state_abbr": "NY", "coastal_share": 0.3, "lake_share": 0.5}
+SCENARIOS = {  # haz type, return period, kept hazard, region options, hazard of Great Lakes blocks
+    "riverine": (1, "-1", "R", {}, "C"),
+    "coastal": (2, "-1", "C", {}, "C"),
+    "both": (3, "mix0", None, {}, "C"),
+    "lakes-riverine": (1, "-1", "R", LAKES, "R"),
+    "lakes-coastal": (2, "-1", "C", LAKES, "C"),
 }
 
 
@@ -50,9 +53,9 @@ SCENARIOS = {
 def gbs_case(request):
     from hazus.flood.gbs import run_gbs
 
-    haz, rp, keep = SCENARIOS[request.param]
-    region = synth.make_region(seed=7, n_blocks=10)
-    aw = synth.make_area_weighted(region, seed=7, return_period=rp)
+    haz, rp, keep, options, lake_hazard = SCENARIOS[request.param]
+    region = synth.make_region(seed=7, n_blocks=10, **options)
+    aw = synth.make_area_weighted(region, seed=7, return_period=rp, lake_hazard=lake_hazard)
     if keep:
         aw = aw[aw["ControllingHazard"] == keep]
     sqlref.load_study_region(region, aw)

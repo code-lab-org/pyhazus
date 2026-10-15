@@ -30,7 +30,10 @@ hazus flood run regions/DC results/ --riverine depth.tif
 Not ported, because the flood model does not read the results: the earthquake, hurricane and tsunami tables,
 vehicles, agriculture, transportation, pipelines, the indirect-economic-loss parameters
 (`absp_IELMParamsEmpInc`, which fills `hzCounty.Income*/Emp*/Output*`), and the general-building-type
-rollups of `absp_PopTabWrapper`.
+rollups of `absp_PopTabWrapper`. Hazus also copies `flSchemeGLakes`, but only the scheme-editing procedures
+read it. Great Lakes (L) blocks take their building distributions from the `<ST>L` schemes of
+`flGBSDist*`. `tests/test_sql_parity_gbs.py` and `tests/test_sql_parity_debris.py` check them on New York
+regions.
 
 ## Behaviours that matter for exact results
 

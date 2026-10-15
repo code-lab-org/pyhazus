@@ -120,6 +120,14 @@ HAZUS_HLL_FIXTURES=work/hll/fixtures pytest tests/test_hll_crosscheck.py
 `tools/hll_fixture.py` restores the backup in the Docker SQL Server and exports the region and Hazus's
 `flAnAreaWeighted`. It then drops the database. The resulting fixture needs no SQL Server.
 
+- **What is kept.** Only the scenarios' depth grids, unless `--keep-all` is given. The raster
+  intermediates of large grids take several GB: the Lake Ontario package extracts to 9.3 GB, and its fixture
+  is 4.0 GB.
+- **Deleted study cases.** Hazus leaves the `flAnAreaWeighted` rows of deleted study cases in the database.
+  The tool skips them.
+- **Riverine modelling of lakes.** The Lake Ontario packages model the lake levels with the *riverine*
+  hazard (`Riverine/Depth`), so they do not exercise coastal zones.
+
 Differences from 7.2 to keep in mind:
 
 - Hazus 5.1 area-weights in the depth grid's projected CRS (here UTM 15N) on the grid's own cells (4 ft);
