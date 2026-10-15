@@ -114,8 +114,22 @@ class FacilityDamageFunctions:
             "cont": (get("flEssntFltyContDmgXRef"), "ContDmgFnId"),
             "util": (get("flUtilFltyDmgXRef"), "UtilFltyDmgFnId"),
         }
+        # default ids per (kind, hazard flag, occupancy), in table order
+        self._defaults: dict[tuple[str, str], dict[str, list]] = {}
+        for kind, (xref, id_col) in self._xrefs.items():
+            x = xref[xref["Selected"].astype(bool) | xref["DefaultFn"].astype(bool)]
+            occ = x["SOccupId"].map(_strip)
+            for flag in ("HazardR", "HazardCA", "HazardCV"):
+                ids: dict[str, list] = {}
+                hit = x[flag].astype(bool).to_numpy()
+                for o, i in zip(occ[hit], x.loc[hit, id_col]):
+                    ids.setdefault(o, []).append(i)
+                self._defaults[kind, flag] = ids
         rs = get("flRsFnEssntFlty")
-        self._restoration = rs.assign(EfClass=rs["EfClass"].map(_strip))
+        self._restoration: dict[str, list[tuple]] = {}  # rows per EF class, in table order
+        for row in zip(rs["EfClass"].map(_strip), rs["Min_Depth"].to_numpy(), rs["Max_Depth"].to_numpy(),
+                       rs["Max_Restor_Days"].to_numpy(), rs["FunctionalDepth"].to_numpy()):
+            self._restoration.setdefault(row[0], []).append(row[1:])
         details = get("flUtilFltyDmgUnionDetails")
         self._functional_depth = {_strip(o): d for o, d in zip(details["Occupancy"], details["Fnctdepth"])}
         ratios = get("hzPctContentOfStructureValue")
@@ -123,13 +137,11 @@ class FacilityDamageFunctions:
 
     def default_id(self, kind: str, hazard: str, depth: float, occupancy: str) -> int | None:
         """The ``flGetDamageXRefId*`` procedure: the xref default for an occupancy, hazard and depth."""
-        xref, id_col = self._xrefs[kind]
         flag = "HazardR" if hazard == "R" else "HazardCV" if hazard == "C" and depth > 6 else "HazardCA"
-        rows = xref[(xref["SOccupId"].map(_strip) == _strip(occupancy)) & xref[flag].astype(bool)
-                    & (xref["Selected"].astype(bool) | xref["DefaultFn"].astype(bool))]
-        if len(rows) > 1:  # Dapper's QuerySingleOrDefault throws here
-            raise LookupError(f"{len(rows)} default {kind} damage functions for {occupancy!r} ({flag})")
-        return int(rows[id_col].iloc[0]) if len(rows) else None
+        ids = self._defaults[kind, flag].get(_strip(occupancy), [])
+        if len(ids) > 1:  # Dapper's QuerySingleOrDefault throws here
+            raise LookupError(f"{len(ids)} default {kind} damage functions for {occupancy!r} ({flag})")
+        return int(ids[0]) if ids else None
 
     def function(self, kind: str, fn_id, hazard: str, depth: float, occupancy: str) -> dict[str, float] | None:
         """The function with id ``fn_id``, else the xref default (``kind`` is "struct", "cont" or "util")."""
@@ -141,16 +153,11 @@ class FacilityDamageFunctions:
 
     def restoration(self, ef_class: str, flooded_depth: float) -> dict | None:
         """``flRsFnEssntFlty`` row with ``Min_Depth <= flooded_depth < Max_Depth`` as ``MaxDays``/``FunctionalDepth``."""
-        rs = self._restoration
-        rows = rs[(rs["EfClass"] == _strip(ef_class)) & (rs["Min_Depth"] <= flooded_depth)
-                  & (rs["Max_Depth"] > flooded_depth)]
-        if rows.empty:
-            return None
-        r = rows.iloc[0]
-        days = r["Max_Restor_Days"]
-        fd = r["FunctionalDepth"]
-        return {"MaxDays": None if pd.isna(days) else int(days),
-                "FunctionalDepth": None if pd.isna(fd) else float(np.float32(fd))}
+        for lo, hi, days, fd in self._restoration.get(_strip(ef_class), ()):
+            if lo <= flooded_depth and hi > flooded_depth:
+                return {"MaxDays": None if pd.isna(days) else int(days),
+                        "FunctionalDepth": None if pd.isna(fd) else float(np.float32(fd))}
+        return None
 
     def functional_depth(self, utility_class: str) -> float | None:
         return self._functional_depth.get(_strip(utility_class))
@@ -324,18 +331,24 @@ def run_facilities(region: Mapping[str, pd.DataFrame], rasters, *, study_case_id
     if utilities:
         kinds += [(k, utility_results) for k in UTILITIES.values()]
 
+    kinds = [(kind, fn) for kind, fn in kinds if kind.base in region]
+    # sample every grid once for the facilities of all kinds
+    points = [facility_points(region[kind.base]) for kind, _ in kinds]
+    xs = np.concatenate([p[0] for p in points]) if points else np.empty(0)
+    ys = np.concatenate([p[1] for p in points]) if points else np.empty(0)
+    bounds = np.cumsum([0] + [len(p[0]) for p in points])
+    sampled = {period: max_depth_at_points([r for r in rasters if int(r.return_period) == period], xs, ys)
+               for period in sorted(ids)}
+
     out: dict[str, pd.DataFrame] = {}
-    for kind, fn in kinds:
-        if kind.base not in region:
-            continue
+    for k, (kind, fn) in enumerate(kinds):
         base = region[kind.base]
         flood = region[kind.flood] if kind.flood in region else flood_defaults(kind, base)
-        xs, ys = facility_points(base)
+        part = slice(bounds[k], bounds[k + 1])
         parts = [fn(kind, base.iloc[:0], flood, [], [], study_case_id=study_case_id, functions=functions)]
         for period in sorted(ids):
-            grids = [r for r in rasters if int(r.return_period) == period]
-            depth, hazard = max_depth_at_points(grids, xs, ys)
-            parts.append(fn(kind, base, flood, depth, hazard, return_period=ids[period],
+            depth, hazard = sampled[period]
+            parts.append(fn(kind, base, flood, depth[part], hazard[part], return_period=ids[period],
                             study_case_id=study_case_id, functions=functions))
         out[kind.result] = pd.concat(parts, ignore_index=True) if len(parts) > 1 else parts[0]
     return out

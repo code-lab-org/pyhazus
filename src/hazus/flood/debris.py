@@ -71,7 +71,7 @@ def calculate_debris(region: Mapping[str, pd.DataFrame], area_weighted: pd.DataF
     scheme["CensusBlock"] = _strip(scheme["CensusBlock"])
     demo = region["hzDemographicsB"].copy()
     demo["CensusBlock"] = _strip(demo["CensusBlock"])
-    sc_blocks = aw_t.loc[aw_t["StudyCaseID"] == study_case_id, "CensusBlock"]
+    sc_blocks = aw_t.loc[aw_t["StudyCaseID"] == study_case_id, "CensusBlock"].unique()
     ppp = _pre_post_pct(_pre_post_bldg(demo[demo["CensusBlock"].isin(sc_blocks)], scheme), scheme)
 
     gbs = aw[(aw["StudyCaseID"] == study_case_id) & (aw["AnalysisOptId"] == analysis_opt_id)].merge(ppp, on="CensusBlock")
