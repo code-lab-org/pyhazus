@@ -3,6 +3,8 @@ name = "pyhazus"
 version = "0.0.1"
 description = "Standalone Python implementation of the FEMA Hazus loss estimation methodology (flood first)."
 readme = "README.md"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
@@ -19,7 +21,6 @@ geo = [
     "rasterio>=1.3",
     "pyproj>=3.6",
     "shapely>=2.0",
-    "exactextract>=0.2",
 ]
 dev = [
     "pytest>=8",
@@ -30,7 +31,7 @@ tools = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

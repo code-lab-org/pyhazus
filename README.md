@@ -1,5 +1,7 @@
 # pyhazus
 
+[![tests](https://github.com/code-lab-org/pyhazus/actions/workflows/tests.yml/badge.svg)](https://github.com/code-lab-org/pyhazus/actions/workflows/tests.yml)
+
 A standalone, cross-platform Python implementation of the FEMA Hazus loss estimation methodology,
 reconstructed from the Hazus 7.0 / 7.2 installers and the FEMA technical manuals. It has no ArcGIS Pro,
 SQL Server or Windows COM dependency at runtime.
@@ -84,7 +86,7 @@ would stop with an unhandled error, the port raises a clear exception instead, o
 
 ## Verification
 
-`pytest` runs unit tests everywhere. The SQL differential tests (`tests/test_sql_parity*.py`) run when a
+`pytest` runs unit tests everywhere; GitHub Actions runs them on Linux, Windows and macOS. The SQL differential tests (`tests/test_sql_parity*.py`) run when a
 SQL Server with the Hazus databases attached is reachable (`HAZUS_SA_PASSWORD` set; see
 [docs/extraction.md](docs/extraction.md)). They load synthetic study regions, run the original stored
 procedures, and compare every result table with the Python output. Integer results must match exactly.
@@ -107,3 +109,9 @@ and mean depths within 0.07 ft. Hazus 5.1 area-weights on the depth grid's own p
 
 The FEMA installers, extracted payloads and decompiled sources are not part of this repository
 (see `.gitignore`).
+
+## License
+
+The code is released under the [BSD 3-Clause License](LICENSE). The Hazus lookup tables in
+`src/hazus/data/hazus72/` are FEMA data exported unchanged from the Hazus 7.2 installer. The BSD license
+covers this project's code, not those tables.

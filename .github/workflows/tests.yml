@@ -1,0 +1,63 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[geo,dev]"
+      # The SQL Server differential tests and the Hazus Loss Library cross-check need local data and skip
+      # themselves here; everything else runs.
+      - name: Test
+        run: python -m pytest -q -rs
+
+  package:
+    name: build and install the wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Check the wheel's contents
+        shell: python
+        run: |
+          import glob, zipfile
+          wheel = glob.glob("dist/*.whl")[0]
+          names = zipfile.ZipFile(wheel).namelist()
+          tables = [n for n in names if n.startswith("hazus/data/hazus72/") and n.endswith(".parquet")]
+          assert len(tables) > 100, f"only {len(tables)} data tables in {wheel}"
+          assert "hazus/data/hazus72/_region_schema.parquet" in tables, "region schema missing"
+          assert any(n.endswith("/licenses/LICENSE") for n in names), "LICENSE missing"
+          print(f"{wheel}: {len(tables)} data tables")
+      - name: Install the wheel and run the CLI
+        run: |
+          python -m pip install "$(ls dist/*.whl)[geo]"
+          cd /tmp && hazus --help && python -c "import hazus.flood, hazus.inventory.region; from hazus import data; print(len(data.available()), 'tables')"
