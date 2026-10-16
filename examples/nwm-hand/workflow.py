@@ -697,6 +697,12 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def text_sha256(path: Path) -> str:
+    """sha256 of a text file with CRLF line endings read as LF, so it matches the file as stored in git and
+    checked out on any platform."""
+    return hashlib.sha256(Path(path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def tree_digest(root: Path) -> dict:
     """sha256 over the relative path and sha256 of every file under root."""
     files = sorted(p for p in root.rglob("*") if p.is_file())
@@ -758,9 +764,9 @@ def step_provenance(r: Run):
     """provenance.json: configuration, code and data versions, retrieval times, environments, step timings."""
     script = Path(__file__).resolve()
     prov = {"written": now_utc(),
-            "config": {"path": rel(r.config_path), "sha256": sha256(r.config_path),
+            "config": {"path": rel(r.config_path), "sha256": text_sha256(r.config_path),
                        "text": r.config_path.read_text(encoding="utf-8")},
-            "workflow": {"script": rel(script), "sha256": sha256(script), "repository": git_info(script.parent)}}
+            "workflow": {"script": rel(script), "sha256": text_sha256(script), "repository": git_info(script.parent)}}
     steps = r.work / "steps.json"
     prov["steps"] = json.loads(steps.read_text()) if steps.exists() else {}
 

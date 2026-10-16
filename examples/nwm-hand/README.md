@@ -171,6 +171,8 @@ Each step writes under `[paths] work` and skips work already done, so steps can 
 Every invocation writes `provenance.json` in the work directory. It records:
 
 - **Configuration:** its text and sha256.
+- **Hashes of the script and configuration:** taken with line endings read as LF, so they match the files as
+  stored in git and checked out on any platform.
 - **Workflow:** the script's sha256, and the repository commit with a flag for uncommitted changes.
 - **Steps:** when each step ran and how long it took (also in `steps.json`).
 - **Environments:** the Python version, platform and every installed package, for both environments.
