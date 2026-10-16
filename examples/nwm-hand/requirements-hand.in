@@ -1,0 +1,28 @@
+# Environment for workflow.py: the workflow's own imports, plus what NOAA-OWP/inundation-mapping's
+# inundate_mosaic_wrapper.py imports (commit bf70e85). Compiled to requirements-hand.txt with the versions the
+# Ida reference run used:
+#   uv pip compile requirements-hand.in -o requirements-hand.txt --python-version 3.12 --constraint <freeze of that env>
+# except xarray 2026.9.0 (rioxarray 0.23 needs xarray >= 2026.2; the run itself had 2025.12, pinned for a
+# FIMserv fetcher this workflow does not use).
+# workflow.py
+geopandas
+netCDF4
+numpy
+pandas
+pyarrow
+pyogrio
+rasterio
+s3fs
+# NOAA-OWP inundation code
+boto3
+dask
+fiona
+geocube
+numba
+odc-geo
+psutil
+python-dotenv
+rioxarray
+scipy
+tqdm
+xarray

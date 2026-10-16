@@ -1,0 +1,28 @@
+# Remnants of Hurricane Ida, 1-3 September 2021, New Castle County, Delaware.
+# Paths are relative to the directory the workflow is run from (the repository root here).
+
+[paths]
+work = "work/ida-ref"
+
+[tools]
+# pyhazus command-line program, from its own environment (see README.md; bin/hazus on Linux or macOS)
+hazus = "work/pyhazus-env/Scripts/hazus.exe"
+
+[region]
+# state inventories exported with `hazus inventory export-state` (see docs/region.md)
+states = ["work/states/DE"]
+counties = ["10003"]
+# year = 2021   # creation year for depreciation; default: the current year, as in Hazus
+
+[hand]
+version = "hand_fim_4_9_9_0"                       # HAND data set (CIROH public bucket)
+code = "work/ida-ref/code/inundation-mapping"      # NOAA-OWP/inundation-mapping clone
+commit = "bf70e85"                                 # v4.10.2.1
+
+[event]
+start = "2021-09-01T00:00Z"
+end = "2021-09-03T23:00Z"
+flows = "nwm_ana"          # "nwm_ana" (operational analysis & assimilation) or "csv" (flows_csv = "...")
+
+[evaluate]
+stn_event = 312            # USGS STN event "2021 Ida" (high-water marks)

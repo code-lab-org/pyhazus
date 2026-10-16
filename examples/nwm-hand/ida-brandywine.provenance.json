@@ -1,0 +1,250 @@
+{
+ "written": "2026-10-16T21:16:31+00:00",
+ "config": {
+  "path": "examples/nwm-hand/ida-brandywine.toml",
+  "sha256": "277933c720b3a12487ad1a7db68988586ff17fd40168d3ccee46e1eae6760a93",
+  "text": "# Remnants of Hurricane Ida, 1-3 September 2021, New Castle County, Delaware.\n# Paths are relative to the directory the workflow is run from (the repository root here).\n\n[paths]\nwork = \"work/ida-ref\"\n\n[tools]\n# pyhazus command-line program, from its own environment (see README.md; bin/hazus on Linux or macOS)\nhazus = \"work/pyhazus-env/Scripts/hazus.exe\"\n\n[region]\n# state inventories exported with `hazus inventory export-state` (see docs/region.md)\nstates = [\"work/states/DE\"]\ncounties = [\"10003\"]\n# year = 2021   # creation year for depreciation; default: the current year, as in Hazus\n\n[hand]\nversion = \"hand_fim_4_9_9_0\"                       # HAND data set (CIROH public bucket)\ncode = \"work/ida-ref/code/inundation-mapping\"      # NOAA-OWP/inundation-mapping clone\ncommit = \"bf70e85\"                                 # v4.10.2.1\n\n[event]\nstart = \"2021-09-01T00:00Z\"\nend = \"2021-09-03T23:00Z\"\nflows = \"nwm_ana\"          # \"nwm_ana\" (operational analysis & assimilation) or \"csv\" (flows_csv = \"...\")\n\n[evaluate]\nstn_event = 312            # USGS STN event \"2021 Ida\" (high-water marks)\n"
+ },
+ "workflow": {
+  "script": "examples/nwm-hand/workflow.py",
+  "sha256": "5a1f9d27db2fcf4ab240dfdd0c0965062a0accdd119251a48ab1e81ebcd55960",
+  "repository": {
+   "commit": "af38d956d37d82b9a39d2477d665ce015c6f84ec",
+   "describe": "af38d95",
+   "uncommitted_changes": true
+  }
+ },
+ "steps": {
+  "region": {
+   "started": "2026-10-16T21:01:52+00:00",
+   "finished": "2026-10-16T21:02:12+00:00",
+   "seconds": 20.4
+  },
+  "hucs": {
+   "started": "2026-10-16T21:02:12+00:00",
+   "finished": "2026-10-16T21:02:19+00:00",
+   "seconds": 6.4
+  },
+  "hand": {
+   "started": "2026-10-16T21:02:19+00:00",
+   "finished": "2026-10-16T21:02:20+00:00",
+   "seconds": 1.2
+  },
+  "flows": {
+   "started": "2026-10-16T21:02:20+00:00",
+   "finished": "2026-10-16T21:02:51+00:00",
+   "seconds": 30.8
+  },
+  "tidal": {
+   "started": "2026-10-16T21:02:51+00:00",
+   "finished": "2026-10-16T21:09:24+00:00",
+   "seconds": 393.4
+  },
+  "inundate": {
+   "started": "2026-10-16T21:09:24+00:00",
+   "finished": "2026-10-16T21:12:13+00:00",
+   "seconds": 168.9
+  },
+  "losses": {
+   "started": "2026-10-16T21:12:13+00:00",
+   "finished": "2026-10-16T21:15:11+00:00",
+   "seconds": 178.1
+  },
+  "evaluate": {
+   "started": "2026-10-16T21:15:11+00:00",
+   "finished": "2026-10-16T21:16:31+00:00",
+   "seconds": 79.5
+  }
+ },
+ "environments": {
+  "workflow": {
+   "python": "3.12.15",
+   "platform": "Windows-11-10.0.26300-SP0",
+   "packages": [
+    "affine==3.0.1",
+    "aiobotocore==2.26.0",
+    "aiohappyeyeballs==2.7.1",
+    "aiohttp==3.14.5",
+    "aioitertools==0.13.0",
+    "aiosignal==1.4.0",
+    "appdirs==1.4.4",
+    "attrs==26.1.0",
+    "boto3==1.41.5",
+    "botocore==1.41.5",
+    "cachetools==6.2.6",
+    "certifi==2026.7.22",
+    "cftime==1.6.6.1",
+    "click-plugins==1.1.1.2",
+    "click==8.5.0",
+    "cligj==0.7.2",
+    "cloudpickle==3.1.2",
+    "colorama==0.4.6",
+    "dask==2025.12.0",
+    "fiona==1.10.1",
+    "frozenlist==1.8.0",
+    "fsspec==2025.12.0",
+    "geocube==0.7.1",
+    "geopandas==1.2.0",
+    "idna==3.20",
+    "jmespath==1.1.0",
+    "llvmlite==0.50.0",
+    "locket==1.0.0",
+    "multidict==6.9.1",
+    "netCDF4==1.7.2",
+    "numba==0.68.0",
+    "numpy==2.5.4",
+    "odc-geo==0.5.3",
+    "packaging==26.3",
+    "pandas==2.3.3",
+    "partd==1.4.2",
+    "propcache==0.5.4",
+    "psutil==7.2.2",
+    "pyarrow==20.0.0",
+    "pyogrio==0.13.0",
+    "pyparsing==3.3.3",
+    "pyproj==3.8.0",
+    "python-dateutil==2.9.0.post0",
+    "python-dotenv==1.2.4",
+    "pytz==2026.5",
+    "PyYAML==6.0.3",
+    "rasterio==1.5.2",
+    "rioxarray==0.23.0",
+    "s3fs==2025.12.0",
+    "s3transfer==0.15.0",
+    "scipy==1.18.1",
+    "shapely==2.2.0",
+    "six==1.17.0",
+    "toolz==1.2.0",
+    "tqdm==4.70.1",
+    "typing_extensions==4.16.0",
+    "tzdata==2026.5",
+    "urllib3==2.8.0",
+    "wrapt==1.17.3",
+    "xarray==2026.9.0",
+    "yarl==1.25.1"
+   ]
+  },
+  "pyhazus": {
+   "python": "3.12.15",
+   "platform": "Windows-11-10.0.26300-SP0",
+   "packages": [
+    "affine==3.0.1",
+    "attrs==26.1.0",
+    "certifi==2026.7.22",
+    "click==8.5.0",
+    "colorama==0.4.6",
+    "geopandas==1.2.0",
+    "iniconfig==2.3.1",
+    "numpy==2.5.4",
+    "packaging==26.3",
+    "pandas==3.0.6",
+    "pluggy==1.7.0",
+    "pyarrow==26.0.0",
+    "Pygments==2.21.0",
+    "pyhazus==0.0.1",
+    "pyogrio==0.13.0",
+    "pyparsing==3.3.3",
+    "pyproj==3.8.0",
+    "pytest==9.1.1",
+    "python-dateutil==2.9.0.post0",
+    "rasterio==1.5.2",
+    "shapely==2.2.0",
+    "six==1.17.0",
+    "tzdata==2026.5"
+   ]
+  }
+ },
+ "data": {
+  "state_inventories": [
+   {
+    "path": "work/states/DE",
+    "files": 35,
+    "bytes": 191618114,
+    "sha256": "bd84567116986a858dd3c8771cf9860bfc635150981b87f000c6be00f256ec3c"
+   }
+  ],
+  "hand": {
+   "bucket": "ciroh-owp-hand-fim",
+   "version": "hand_fim_4_9_9_0",
+   "watersheds": [
+    "02040202",
+    "02040205",
+    "02040206",
+    "02040207",
+    "02060002"
+   ],
+   "files": 1356,
+   "bytes": 2104556191,
+   "newest_last_modified": "2026-04-27 17:08:56+00:00",
+   "listed": "2026-10-16T21:02:20+00:00",
+   "manifest": "work/ida-ref/hand/manifest.csv"
+  },
+  "owp_code": {
+   "repository": "https://github.com/NOAA-OWP/inundation-mapping.git",
+   "configured_commit": "bf70e85",
+   "commit": "bf70e854ea969a50623e83b22a7bf6a5d39e13d9",
+   "describe": "v4.0.18.0-355-gbf70e85",
+   "uncommitted_changes": false
+  },
+  "flows": {
+   "source": "NWM analysis & assimilation (tm00, CONUS channel_rt)",
+   "files": 72,
+   "first_valid": "2021-09-01T00:00:00+00:00",
+   "last_valid": "2021-09-03T23:00:00+00:00",
+   "archive_last_modified": [
+    "2021-09-01T00:44:41+00:00",
+    "2021-09-03T23:46:14+00:00"
+   ],
+   "manifest": "work/ida-ref/flows/nwm_ana_files.csv"
+  },
+  "web_services": {
+   "3DEP elevation (getSamples)": {
+    "cached_answers": 25177,
+    "first_retrieved": "2026-10-16T21:03:14+00:00",
+    "answers": 25177,
+    "last_retrieved": "2026-10-16T21:15:21+00:00"
+   },
+   "NOAA CO-OPS stations and datums": {
+    "cached_answers": 27,
+    "first_retrieved": "2026-10-16T21:02:52+00:00",
+    "answers": 27,
+    "last_retrieved": "2026-10-16T21:07:46+00:00"
+   },
+   "NOAA NCAT datum conversion": {
+    "cached_answers": 6,
+    "first_retrieved": "2026-10-16T21:15:43+00:00",
+    "answers": 6,
+    "last_retrieved": "2026-10-16T21:16:23+00:00"
+   },
+   "OpenFEMA NFIP claims (v3)": {
+    "cached_answers": 0,
+    "first_retrieved": "2026-10-16T21:15:22+00:00",
+    "answers": 97,
+    "last_retrieved": "2026-10-16T21:15:22+00:00"
+   },
+   "USGS STN high-water marks": {
+    "cached_answers": 4,
+    "first_retrieved": "2026-10-16T21:15:12+00:00",
+    "answers": 4,
+    "last_retrieved": "2026-10-16T21:15:14+00:00"
+   },
+   "USGS water data (gauge series)": {
+    "cached_answers": 92,
+    "first_retrieved": "2026-10-16T21:15:23+00:00",
+    "answers": 92,
+    "last_retrieved": "2026-10-16T21:16:30+00:00"
+   },
+   "USGS water data (sites)": {
+    "cached_answers": 46,
+    "first_retrieved": "2026-10-16T21:15:23+00:00",
+    "answers": 46,
+    "last_retrieved": "2026-10-16T21:16:29+00:00"
+   }
+  },
+  "web_cache": {
+   "path": "work/ida-ref/cache/web.json",
+   "entries": 25352,
+   "sha256": "c20e925e6ffefa299a93dab54bb88fc5d5d816020456ba61a9be6d950477f434"
+  }
+ }
+}

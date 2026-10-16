@@ -1,0 +1,67 @@
+# Runtime dependencies of pyhazus (pyproject.toml, extra "geo") at the versions of the Ida reference run
+# (Python 3.12.15). Compiled with:
+#   uv pip compile pyproject.toml --extra geo -o requirements-pyhazus.txt --python-version 3.12 --constraint <freeze of that env>
+# Install these, then pyhazus itself from the repository root with: uv pip install --no-deps -e .
+affine==3.0.1
+    # via
+    #   rasterio
+attrs==26.1.0
+    # via
+    #   affine
+    #   rasterio
+certifi==2026.7.22
+    # via
+    #   pyogrio
+    #   pyproj
+    #   rasterio
+click==8.5.0
+    # via
+    #   rasterio
+geopandas==1.2.0
+    # via
+    #   pyhazus (pyproject.toml)
+numpy==2.5.4
+    # via
+    #   pyhazus (pyproject.toml)
+    #   geopandas
+    #   pandas
+    #   pyogrio
+    #   rasterio
+    #   shapely
+packaging==26.3
+    # via
+    #   geopandas
+    #   pyogrio
+pandas==3.0.6
+    # via
+    #   pyhazus (pyproject.toml)
+    #   geopandas
+pyarrow==26.0.0
+    # via
+    #   pyhazus (pyproject.toml)
+pyogrio==0.13.0
+    # via
+    #   geopandas
+pyparsing==3.3.3
+    # via
+    #   rasterio
+pyproj==3.8.0
+    # via
+    #   pyhazus (pyproject.toml)
+    #   geopandas
+python-dateutil==2.9.0.post0
+    # via
+    #   pandas
+rasterio==1.5.2
+    # via
+    #   pyhazus (pyproject.toml)
+shapely==2.2.0
+    # via
+    #   pyhazus (pyproject.toml)
+    #   geopandas
+six==1.17.0
+    # via
+    #   python-dateutil
+tzdata==2026.5
+    # via
+    #   pandas
